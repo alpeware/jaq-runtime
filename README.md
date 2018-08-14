@@ -17,7 +17,7 @@ Alpha quality with some API changes expected.
 
 ## Runtime
 
-Create new file ```src/jaq/bootstrap.clj````
+Create new file ```src/jaq/bootstrap.clj```
 
 ``` clojure
 (ns jaq.bootstrap
