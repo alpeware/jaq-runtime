@@ -1,4 +1,4 @@
-(def sdk-version "1.9.60")
+ (def sdk-version "1.9.64")
 
 (defproject com.alpeware/jaq-runtime "0.1.0-SNAPSHOT"
   :description "JAQ - Bringing Clojure to Google App Engine"
@@ -20,21 +20,12 @@
 
                  [com.taoensso/timbre "4.10.0"]
 
-                 [bidi "2.1.3"]
-
-                 [ring/ring "1.6.3"]
-                 [ring/ring-core "1.6.3"]
-                 [ring/ring-defaults "0.3.2"]
-                 [fogus/ring-edn "0.3.0"]]
+                 [io.pedestal/pedestal.service "0.5.4"]
+                 [io.pedestal/pedestal.service-tools "0.5.4"]]
 
   :plugins [[com.alpeware/lein-jaq "0.1.0-SNAPSHOT"]]
 
-  :aot [jaq.runtime]
-
-  :ring {:handler jaq.runtime/app
-         :init jaq.runtime/init
-         :destroy jaq.runtime/destroy
-         :web-xml "war-resources/web.xml"}
+  :aliases {"bootstrap" ["run" "-m" "jaq.deploy"]}
 
   :jaq {:sdk-path "sdk"
         :sdk-version ~sdk-version
@@ -47,5 +38,5 @@
         :project-name "alpeware-jaq-runtime"
         :location-id "us-central"
         :bucket "staging.alpeware-jaq-runtime.appspot.com"
-        :prefix "apps/v1"
-        :version "v1"})
+        :prefix "apps/v17"
+        :version "v17"})

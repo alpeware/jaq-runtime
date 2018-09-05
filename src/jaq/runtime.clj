@@ -1,16 +1,15 @@
 (ns jaq.runtime
   (:require
-   [bidi.ring :refer [make-handler]]
-   [jaq.repl :refer [new-clj-session eval-clj]]
+   [jaq.repl :refer [repl-handler]]
+   [jaq.deploy :as deploy]
    [jaq.services.deferred :refer [defer defer-fn]]
    [jaq.services.storage :as storage]
    [jaq.services.management :as management]
    [jaq.services.util :as util :refer [remote! repl-server credentials]]
-   [ring.util.response :as response]
-   [ring.util.servlet :refer [defservice]]
-   [ring.middleware.defaults :refer [wrap-defaults site-defaults]]
-   [ring.middleware.params :refer [wrap-params]]
-   [ring.middleware.edn :refer [wrap-edn-params]]
+   [io.pedestal.http :as http]
+   [io.pedestal.http.route :as route]
+   [io.pedestal.http.body-params :as body-params]
+   [ring.util.response :as ring-response]
    [clojure.tools.deps.alpha.util.maven :as mvn]
    [clojure.tools.deps.alpha :refer [resolve-deps]]
    [clojure.java.io :as io]
@@ -29,6 +28,83 @@
                   :mvn/repos mvn/standard-repos
                   :mvn/local-repo "/tmp"} nil)
 
+   (with-redefs [util/*credentials-file* (io/resource ".credentials")])
+
+   (->> (io/resource "jaq/runtime.clj")
+        (slurp))
+
+   (->> (io/resource ".credentials")
+        (slurp)
+        (clojure.edn/read-string)
+        (reset! util/credentials))
+
+   (swap! routes conj ["/baz" :get [`hello-world] :route-name :baz])
+
+   (defn foo [] :foo)
+
+   (-> foo
+       (str)
+       (clojure.repl/demunge)
+       (clojure.string/split #"@")
+       (first)
+       ((fn [e] (str "(" e ")")))
+       (read-string)
+       (eval))
+
+   (defn fn->str [f]
+     (when f
+       (-> f
+           (str)
+           (clojure.repl/demunge)
+           (clojure.string/split #"@")
+           (first))))
+
+   *ns*
+
+   (-> (util/fn->str storage/file-upload-done)
+       (util/call-fn))
+
+   (reset! storage/file-counter 0)
+
+   @storage/file-counter
+
+   (spit "/tmp/foo.txt" "foo bar")
+
+   (in-ns 'jaq.runtime)
+   (storage/put-large (storage/default-bucket) "/tmp/foo.txt" "/tmp" "tmp" {:callback storage/file-upload-done})
+
+   (apply storage/file-upload-done [{:foo :bar}])
+
+   (defn call-fn [s & args]
+     (when s
+       (-> s
+           ((fn [e] (str "(apply " e " " (or args []) ")")))
+           (read-string)
+           (eval))))
+
+
+   (str "<" :foo nil [] ">")
+
+   (->
+    nil
+    (fn->str)
+    (call-fn))
+
+
+   (-> #'repl-handler meta :name)
+
+   (with-redefs [clojure.tools.gitlibs/cache-dir (fn []
+                                                   (prn "gitlibs cache dir")
+                                                   "/tmp/.cache"
+                                                   )]
+     (clojure.tools.gitlibs/cache-dir))
+
+
+   (->>
+    (clojure.string/split "/foo/bar.jar" #"/")
+    (last)
+    (conj [:foo]))
+
    (def s (->
            (clojure.java.io/file "/tmp/.m2")
            (file-seq)))
@@ -39,15 +115,16 @@
         (count))
    (->> s count)
 
-   (-> (io/resource "jaq/runtime.clj")
+   (-> (clojure.java.io/resource "jaq/runtime.clj")
        (.getPath)
        (clojure.string/split #"runtime.clj")
        (first)
-       (io/file)
+       (clojure.java.io/file)
        (file-seq)
-       (count))
+       ((fn [f] (filter (fn [e] (.isFile e)) f)))
+       ((fn [f] (take 5 f)))
+       ((fn [f] (map (fn [e] (.getPath e)) f))))
 
-   javax.servlet.http.HttpServlet
    *compile-path*
    (io/make-parents "/tmp/classes/foo.bar")
    (binding [*compile-path* "/tmp/classes"]
@@ -57,21 +134,73 @@
        (file-seq))
 
    (System/getProperty "user.home")
+   (System/getProperties)
+   (System/getenv)
+
+   (->> (io/file "/base/java8_runtime")
+        (file-seq)
+        (filter (fn [e] (-> e (.getName) (clojure.string/ends-with? ".jar"))))
+        (map (fn [e]
+               (->> e
+                    #_(.getName)
+                    (java.util.jar.JarFile.)
+                    (.entries)
+                    (iterator-seq)
+                    (map (fn [e] (.getName e)))
+                    (count)
+                    (conj [(.getName e)])))))
+
+   (->> (io/file "/base/java8_runtime/java_runtime_launcher_ex")
+        (.length))
+
+   (->> (java.util.jar.JarFile. "/base/java8_runtime/runtime-impl.jar")
+        (.entries)
+        (iterator-seq)
+        (map (fn [e] (.getName e)))
+        #_(count))
+
+   (import com.google.apphosting.runtime.AppVersion)
+   (import com.google.apphosting.utils.config.AppYaml)
+
+   (->> com.google.apphosting.base.AppinfoPb$AppInfo
+        clojure.reflect/reflect
+        :members
+        (filter #(contains? (:flags %) :public))
+        clojure.pprint/print-table)
+
+   #_(["appengine-api.jar" 10520] ["conscrypt.jar" 286] ["jdbc-mysql-connector.jar" 300] ["legacy.jar" 34735] ["runtime-appengine-api.jar" 2364] ["runtime-impl-third-party.jar" 1645] ["runtime-impl.jar" 11777] ["runtime-main.jar" 43] ["runtime-shared.jar" 332])
+
    (storage/default-bucket)
    (com.google.auth.appengine.AppEngineCredentials/getApplicationDefault)
+
+   *ns*
    (->> (com.google.appengine.api.appidentity.AppIdentityServiceFactory/getAppIdentityService)
         ((fn [e] (.getAccessToken e jaq.services.auth/cloud-scopes)))
-       ((fn [e]
-          {:access-token (.getAccessToken e)
-           :expires-in (-> e (.getExpirationTime) (.getTime))}))
-       (reset! util/credentials))
+        ((fn [e]
+           {:access-token (.getAccessToken e)
+            :expires-in (-> e (.getExpirationTime) (.getTime))}))
+        (reset! util/credentials))
 
    (->>
     (management/services)
-    (map (fn [e] (-> e :serviceConfig :title)))
-    )
+    (map (fn [e] (-> e :serviceConfig :title))))
+
+   (in-ns 'jaq.runtime)
+   (management/enable "servicemanagement.googleapis.com" "alpeware-jaq-runtime")
    (management/enable "storage-api.googleapis.com" "alpeware-jaq-runtime")
+   (management/enable "cloudtasks.googleapis.com" "alpeware-jaq-runtime")
+
    (storage/buckets "alpeware-jaq-runtime")
+   (storage/list (storage/default-bucket))
+   (storage/list "staging.alpeware-jaq-runtime.appspot.com")
+   (->> (storage/objects (storage/default-bucket) {:prefix "src"})
+        (map :name)
+        (map (fn [e] (-> e (java.net.URLEncoder/encode "UTF-8")))))
+
+   (storage/action :get [:b (storage/default-bucket) :o])
+   (util/substitute [:b (storage/default-bucket) :o] storage/default-endpoint)
+
+   (storage/default-bucket)
 
    (def deps
      {:paths ["/tmp"]
@@ -101,58 +230,74 @@
              'com.google.appengine/appengine-remote-api  {:mvn/version "1.9.60"}
              'com.google.appengine/appengine-tools-sdk  {:mvn/version "1.9.60"}}})
 
+   *ns*
+   (in-ns 'jaq.runtime)
    (defmethod defer-fn ::deps [{:keys [deps]}]
      (debug ::deps)
-     (resolve-deps deps nil)
+     #_(resolve-deps deps nil)
      )
 
    (defer {:fn ::deps :deps deps})
 
+   (jaq.runtime/save-file "foo.txt" "foo bar baz")
+   (jaq.runtime/get-file "foo/bar.txt")
+
+   (java.net.URLEncoder/encode "src/foo/bar.txt" "UTF-8")
+
    )
 
-(def repl-sessions (atom {}))
 
 (defmulti listener-fn :fn)
 (defmethod listener-fn :default [_])
 
-(defn init []
-  (listener-fn {:fn :init}))
 
-(defn destroy []
-  (listener-fn {:fn :destroy}))
+(defn index-handler
+  [request]
+  (let [name (get-in request [:params :name] "World")]
+    (debug "hello world")
+    {:status 200 :body (str "Hi there " name "!\n")}))
 
-(defn repl-handler [{:keys [body params] :as request}]
-  (let [{:keys [form device-id repl-type broadcast]} params
-        _ (debug "device id" device-id)
-        repl-type (read-string repl-type)
-        broadcast (read-string broadcast)
-        _ (debug repl-type)
-        [session eval-fn] (when (= :clj repl-type)
-                            [(get @repl-sessions device-id (jaq.repl/new-clj-session))
-                             jaq.repl/eval-clj])
-        evaled (try
-                 (eval-fn session form)
-                 (catch Throwable t t))
-        result (str (:value evaled) "\n" (:ns evaled) "=> ")]
+(def routes
+  (atom #{["/" :get [`index-handler]]
+          ["/repl" :post [(body-params/body-params) `repl-handler]]}))
 
-    (when (= :clj repl-type)
-      (swap! repl-sessions assoc device-id session))
+(def service {:env :prod
+              ;; You can bring your own non-default interceptors. Make
+              ;; sure you include routing and set it up right for
+              ;; dev-mode. If you do, many other keys for configuring
+              ;; default interceptors will be ignored.
+              ;; ::http/interceptors []
+              ::http/routes (fn [] (route/expand-routes @routes))
 
-    (debug "edn" params evaled)
-    (response/content-type
-     (response/response result)
-     "application/edn")))
+              ;; Uncomment next line to enable CORS support, add
+              ;; string(s) specifying scheme, host and port for
+              ;; allowed source(s):
+              ;;
+              ;; "http://localhost:8080"
+              ;;
+              ;;::http/allowed-origins ["scheme://host:port"]
 
-(def routes ["" [["/repl" :repl]]])
+              ;; Root for resource interceptor that is available by default.
+              ;;::http/resource-path "/public"
+              })
 
-(def handlers {:repl #'repl-handler})
+(defonce servlet (atom nil))
 
-(def handler
-  (make-handler routes #'handlers))
+(defn servlet-init
+  [_ config]
+  ;; Initialize your app here.
+  (debug "init servlet")
+  (listener-fn {:fn :init})
+  (reset! servlet (http/servlet-init service config)))
 
-(def app
-  (-> #'handler
-      (wrap-defaults (assoc-in site-defaults [:security :anti-forgery] false))
-      (wrap-edn-params)))
+(defn servlet-service
+  [_ request response]
+  (debug "servlet service")
+  (http/servlet-service @servlet request response))
 
-(defservice app)
+(defn servlet-destroy
+  [_]
+  (debug "servlet destroy")
+  (listener-fn {:fn :destroy})
+  (http/servlet-destroy @servlet)
+  (reset! servlet nil))

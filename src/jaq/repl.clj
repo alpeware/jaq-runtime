@@ -1,42 +1,15 @@
 (ns jaq.repl
   (:require
    [clojure.main :as main]
-   [clojure.core.server :as server]
-   [clojure.edn :as edn]
-   [clojure.tools.reader :as reader]
-   [cljs.tagged-literals :as tags]
-   [clojure.core.async :refer [chan <!! <! >! put! alts! alts!! timeout close! go go-loop]
-    :as async]
-   [cljs.build.api :as api]
-   [cljs.compiler :as comp]
-   [cljs.closure :as cljsc]
-   [cljs.env :as env]
-   [cljs.analyzer :as ana]
-   [clojure.data.json :as json]
-   [clojure.java.io :as io]
-   [cljs.repl :as cljs-repl :refer [repl* analyze-source]]
+   [clojure.walk :refer [keywordize-keys]]
+   [jaq.services.storage :as storage]
    [taoensso.timbre :as timbre
-    :refer [log  trace  debug  info  warn  error  fatal  report
-            logf tracef debugf infof warnf errorf fatalf reportf
-            spy get-env]]
-   [jaq.services.deferred :as deferred]
-   [jaq.services.util :refer [remote! repl-server prod?]])
+    :refer [log  trace  debug  info  warn  error  fatal  report]])
   (:import
-   #_[com.google.javascript.rhino Node]
-   [com.google.javascript.jscomp CompilerOptions CompilationLevel
-    CompilerOptions$LanguageMode SourceMap$Format Compiler$CodeBuilder
-    SourceMap$DetailLevel ClosureCodingConvention SourceFile
-    Result JSError CheckLevel DiagnosticGroups
-    CommandLineRunner AnonymousFunctionNamingPolicy
-    JSModule SourceMap Es6RewriteModules VariableMap]
-   [java.util List Random UUID]
-   [java.net ServerSocket]
-   [clojure.lang LineNumberingPushbackReader]
-   [com.google.appengine.api ThreadManager]
-   [java.io
-    PipedWriter PipedReader PrintWriter
-    File BufferedInputStream BufferedReader PushbackReader
-    Writer InputStreamReader IOException StringWriter ByteArrayInputStream]))
+   [java.net URLEncoder]))
+
+;;; State
+(def repl-sessions (atom {}))
 
 ;;; CLJ REPL
 (defn new-clj-session []
@@ -72,3 +45,46 @@
             (reset! result {:value (repl-caught e) :ns (symbol (str *ns*))}))
           (finally (swap! session assoc :bindings (get-thread-bindings))))))
     @result))
+
+;;; Handler
+(defn save-file [file-name body]
+  (let [bucket (storage/default-bucket)
+        path file-name
+        content-type "text/plain"]
+    (storage/put-simple bucket path content-type body)))
+
+(defn get-file [file-name]
+  (let [bucket (storage/default-bucket)
+        path (-> file-name
+                 (URLEncoder/encode "UTF-8"))]
+    (storage/get-file bucket path)))
+
+(defn repl-handler [{:keys [body params] :as request}]
+  (let [{:keys [form device-id repl-type broadcast repl-token]} (keywordize-keys params)
+        _ (debug request)
+        _ (debug "form" form)
+        _ (debug "device id" device-id)
+        _ (debug repl-type)
+        repl-type (read-string repl-type)
+        broadcast (read-string broadcast)
+        [session eval-fn] (when (= :clj repl-type)
+                            [(get @repl-sessions device-id (new-clj-session))
+                             eval-clj])
+        evaled (if (= repl-token (System/getProperty "JAQ_REPL_TOKEN"))
+                   (try
+                     (eval-fn session form)
+                    (catch Throwable t t))
+                   {:value "Unauthorized!" :ns "clojure.core"})
+        ;;result (str (:value evaled) "\n" (:ns evaled) "=> ")
+        result (str (:value evaled) "\n" (:ns evaled) "=> ")
+        ]
+
+    (when (= :clj repl-type)
+      (swap! repl-sessions assoc device-id session))
+
+    (debug "edn" params evaled)
+    {:status 200 :body result}
+    #_(http/edn-response result)
+    #_(ring-response/content-type
+       (ring-response/response result)
+       "application/edn")))
