@@ -40,32 +40,7 @@
 
    (swap! routes conj ["/baz" :get [`hello-world] :route-name :baz])
 
-   (defn foo [] :foo)
-
-   (-> foo
-       (str)
-       (clojure.repl/demunge)
-       (clojure.string/split #"@")
-       (first)
-       ((fn [e] (str "(" e ")")))
-       (read-string)
-       (eval))
-
-   (defn fn->str [f]
-     (when f
-       (-> f
-           (str)
-           (clojure.repl/demunge)
-           (clojure.string/split #"@")
-           (first))))
-
-   *ns*
-
-   (-> (util/fn->str storage/file-upload-done)
-       (util/call-fn))
-
    (reset! storage/file-counter 0)
-
    @storage/file-counter
 
    (spit "/tmp/foo.txt" "foo bar")
@@ -73,37 +48,8 @@
    (in-ns 'jaq.runtime)
    (storage/put-large (storage/default-bucket) "/tmp/foo.txt" "/tmp" "tmp" {:callback storage/file-upload-done})
 
-   (apply storage/file-upload-done [{:foo :bar}])
-
-   (defn call-fn [s & args]
-     (when s
-       (-> s
-           ((fn [e] (str "(apply " e " " (or args []) ")")))
-           (read-string)
-           (eval))))
-
-
-   (str "<" :foo nil [] ">")
-
-   (->
-    nil
-    (fn->str)
-    (call-fn))
-
-
    (-> #'repl-handler meta :name)
 
-   (with-redefs [clojure.tools.gitlibs/cache-dir (fn []
-                                                   (prn "gitlibs cache dir")
-                                                   "/tmp/.cache"
-                                                   )]
-     (clojure.tools.gitlibs/cache-dir))
-
-
-   (->>
-    (clojure.string/split "/foo/bar.jar" #"/")
-    (last)
-    (conj [:foo]))
 
    (def s (->
            (clojure.java.io/file "/tmp/.m2")
@@ -114,16 +60,6 @@
         (filter (fn [e] (-> e .toPath .getFileName (clojure.string/ends-with? ".jar"))))
         (count))
    (->> s count)
-
-   (-> (clojure.java.io/resource "jaq/runtime.clj")
-       (.getPath)
-       (clojure.string/split #"runtime.clj")
-       (first)
-       (clojure.java.io/file)
-       (file-seq)
-       ((fn [f] (filter (fn [e] (.isFile e)) f)))
-       ((fn [f] (take 5 f)))
-       ((fn [f] (map (fn [e] (.getPath e)) f))))
 
    *compile-path*
    (io/make-parents "/tmp/classes/foo.bar")
@@ -159,19 +95,13 @@
         (map (fn [e] (.getName e)))
         #_(count))
 
-   (import com.google.apphosting.runtime.AppVersion)
-   (import com.google.apphosting.utils.config.AppYaml)
-
    (->> com.google.apphosting.base.AppinfoPb$AppInfo
         clojure.reflect/reflect
         :members
         (filter #(contains? (:flags %) :public))
         clojure.pprint/print-table)
 
-   #_(["appengine-api.jar" 10520] ["conscrypt.jar" 286] ["jdbc-mysql-connector.jar" 300] ["legacy.jar" 34735] ["runtime-appengine-api.jar" 2364] ["runtime-impl-third-party.jar" 1645] ["runtime-impl.jar" 11777] ["runtime-main.jar" 43] ["runtime-shared.jar" 332])
-
    (storage/default-bucket)
-   (com.google.auth.appengine.AppEngineCredentials/getApplicationDefault)
 
    *ns*
    (->> (com.google.appengine.api.appidentity.AppIdentityServiceFactory/getAppIdentityService)
@@ -189,6 +119,7 @@
    (management/enable "servicemanagement.googleapis.com" "alpeware-jaq-runtime")
    (management/enable "storage-api.googleapis.com" "alpeware-jaq-runtime")
    (management/enable "cloudtasks.googleapis.com" "alpeware-jaq-runtime")
+   (management/enable "appengine.googleapis.com" "alpeware-jaq-runtime")
 
    (storage/buckets "alpeware-jaq-runtime")
    (storage/list (storage/default-bucket))

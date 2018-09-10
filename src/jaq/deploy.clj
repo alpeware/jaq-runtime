@@ -97,7 +97,7 @@
                                        (string/join File/separator)
                                        (io/file))
                                   (->> classes-path
-                                      (io/file)))]
+                                       (io/file)))]
                   (if is-file
                     (copy-file source-file dest-file)
                     (copy-dir e (.getPath dest-file))))))
@@ -162,36 +162,28 @@
     (storage/copy src-dir bucket prefix)
     (debug "File counter" @storage/file-counter)
     #_(loop []
-      (debug "File counter" @storage/file-counter)
-      (when-not (zero? @storage/file-counter)
-        (sleep)
-        (recur)))))
+        (debug "File counter" @storage/file-counter)
+        (when-not (zero? @storage/file-counter)
+          (sleep)
+          (recur)))))
 
 (defn deploy
   "Deploys to App Engine."
   [opts]
   (let [project-id (get-in opts [:project-id])
         bucket (get-in opts [:code-bucket])
-        prefix (get-in opts [:prefix])
+        prefix (get-in opts [:code-prefix])
         version (get-in opts [:version])
         servlet (get-in opts [:servlet] "servlet")]
     (debug "Deploying app...")
-    (loop [op (admin/deploy-app project-id bucket prefix version servlet)]
-      (debug op)
-      (when-not (:done op)
-        (sleep)
-        (recur (admin/operation (:name op)))))))
+    (defer {:fn ::op :op (admin/deploy-app project-id bucket prefix version servlet)})))
 
 (defn migrate
   "Migrate traffic to application version."
   [opts]
   (let [project-id (get-in opts [:project-id])
         version (get-in opts [:version])]
-    (loop [op (admin/migrate project-id version)]
-      (debug op)
-      (when-not (:done op)
-        (sleep)
-        (recur (admin/operation (:name op)))))))
+    (defer {:fn ::op :op (admin/migrate project-id version)})))
 
 (defn create-project
   "Create project."
@@ -221,11 +213,29 @@
 
 ;;;
 
-(defmethod defer-fn ::deploy [{:keys [config]}]
-  (debug ::deploy config)
+(defmethod defer-fn ::deps [{:keys [config]}]
+  (debug ::deps config)
   (prepare-src config)
   (exploded-war config)
+  #_(defer {:fn ::upload :config config})
+  #_(upload config))
+
+(defmethod defer-fn ::upload [{:keys [config]}]
+  (debug ::upload config)
   (upload config))
+
+(defmethod defer-fn ::deploy [{:keys [config]}]
+  (debug ::deploy config)
+  (deploy config))
+
+(defmethod defer-fn ::migrate [{:keys [config]}]
+  (debug ::migrate config)
+  (migrate config))
+
+(defmethod defer-fn ::op [{:keys [op]}]
+  (debug ::op op)
+  (when-not (or (:done op) (:error op))
+    (defer {:fn ::op :op (admin/operation (:name op))} {:delay-ms 2000})))
 
 #_(
    *ns*
@@ -237,10 +247,43 @@
                       :src ["/tmp/resources" "/tmp/.cache/src"]}
                      (parse-config (jaq.repl/get-file "jaq-config.edn")))
          config (merge deps-edn opts)]
-     (defer {:fn ::deploy :config config}))
+     #_(defer {:fn ::deps :config config})
+     #_(defer {:fn ::upload :config config})
+     #_(defer {:fn ::deploy :config config})
+     (defer {:fn ::migrate :config config}))
+
+   (->> (io/file "/tmp/war/WEB-INF/lib")
+        (file-seq)
+        (filter #(.isFile %))
+        count)
+
+   *ns*
+   (let [remotes
+         (->> (storage/objects (str "staging." (storage/default-bucket)) {:prefix "apps/v19"})
+              #_(take 2)
+              (map :name)
+              (map (fn [e] (-> e (clojure.string/split #"/") (last))))
+              (set)
+              #_(count))]
+     (->> (io/file "/tmp/war")
+          (file-seq)
+          (filter (fn [e] (.isFile e)))
+          (filter (fn [e] (->> (.getName e) (contains? remotes) (not))))
+          (take 1)
+          #_(map (fn [e] (.getName e)))
+          (map (fn [e]
+                 (storage/put-large "staging.alpeware-jaq-runtime.appspot.com" (.getPath e) "/tmp/war" "apps/v19" {:callback storage/file-upload-done})))
+          (doall)
+          #_(count)))
+
+   *ns*
+   (storage/put-large "staging.alpeware-jaq-runtime.appspot.com" "/tmp/war/WEB-INF/lib/clojure-1.9.0.jar" "/tmp/war" "apps/v18" {:callback storage/file-upload-done})
+   (storage/put-large "staging.alpeware-jaq-runtime.appspot.com" "/tmp/war/WEB-INF/lib/appengine-api-1.0-sdk-1.9.64.jar" "/tmp/war" "apps/v19")
+   (storage/put-large "staging.alpeware-jaq-runtime.appspot.com" "/tmp/war/WEB-INF/lib/appengine-tools-sdk-1.9.64.jar" "/tmp/war" "apps/v19")
 
    @storage/file-counter
    (reset! storage/file-counter 0)
+
 
    (->> (range 10)
         (map (fn [e]
@@ -253,11 +296,12 @@
    (->> (storage/copy "/tmp/foo" "staging.alpeware-jaq-runtime.appspot.com" "bar")
         #_((fn [& e]) @storage/file-counter))
 
-(->> (io/file "/tmp/war")
+   *ns*
+   (->> (io/file "/tmp/.cache")
         (file-seq)
         (reverse)
         (map (fn [e] (io/delete-file e)))
-        #_(count)
+        (count)
         )
    (slurp "/tmp/war/WEB-INF/web.xml")
    (slurp "https://repo1.maven.org/")
