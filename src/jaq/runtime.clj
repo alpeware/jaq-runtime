@@ -1,6 +1,6 @@
 (ns jaq.runtime
   (:require
-   [jaq.repl :refer [repl-handler]]
+   [jaq.repl :refer [repl-handler index-handler]]
    [jaq.deploy :as deploy]
    [jaq.services.deferred :refer [defer defer-fn]]
    [jaq.services.storage :as storage]
@@ -104,6 +104,7 @@
    (storage/default-bucket)
 
    *ns*
+   (in-ns 'jaq.runtime)
    (->> (com.google.appengine.api.appidentity.AppIdentityServiceFactory/getAppIdentityService)
         ((fn [e] (.getAccessToken e jaq.services.auth/cloud-scopes)))
         ((fn [e]
@@ -120,6 +121,8 @@
    (management/enable "storage-api.googleapis.com" "alpeware-jaq-runtime")
    (management/enable "cloudtasks.googleapis.com" "alpeware-jaq-runtime")
    (management/enable "appengine.googleapis.com" "alpeware-jaq-runtime")
+   (management/enable "cloudresourcemanager.googleapis.com" "alpeware-jaq-runtime")
+   (management/enable "script.googleapis.com" "alpeware-jaq-runtime")
 
    (storage/buckets "alpeware-jaq-runtime")
    (storage/list (storage/default-bucket))
@@ -180,13 +183,6 @@
 
 (defmulti listener-fn :fn)
 (defmethod listener-fn :default [_])
-
-
-(defn index-handler
-  [request]
-  (let [name (get-in request [:params :name] "World")]
-    (debug "hello world")
-    {:status 200 :body (str "Hi there " name "!\n")}))
 
 (def routes
   (atom #{["/" :get [`index-handler]]

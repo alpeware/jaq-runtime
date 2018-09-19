@@ -36,7 +36,8 @@
         :port 3000
         :project-id "alpeware-jaq-runtime"
         :project-name "alpeware-jaq-runtime"
+        :service :default
         :location-id "us-central"
         :bucket "staging.alpeware-jaq-runtime.appspot.com"
-        :prefix "apps/v17"
-        :version "v17"})
+        :prefix "apps/v23"
+        :version "v23"})

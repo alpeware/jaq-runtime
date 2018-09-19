@@ -123,17 +123,25 @@
       war-stream))
 
 (defn resolve-deps [opts war-path]
-  (let [default-cache (or (:default-cache opts) "/tmp/.cache")
+  (let [default-cache (:default-cache opts "/tmp/.cache")
         src-path (:src opts)
         deps-map {:paths [war-path]
                   :mvn/repos mvn/standard-repos
-                  :mvn/local-repo (or (:mvn/local-repo opts) default-cache)
+                  :mvn/local-repo (:mvn/local-repo opts default-cache)
                   :deps (:deps opts)}]
     (with-redefs [clojure.tools.gitlibs.impl/cache-dir (fn []
-                                                         (or (:git/local-repo opts)
-                                                             default-cache))]
-      (deps/make-classpath
-       (deps/resolve-deps deps-map {:verbose true}) src-path nil))))
+                                                         (:git/local-repo opts default-cache))]
+      (let [lib-map (deps/resolve-deps deps-map nil)
+            cp (deps/make-classpath lib-map src-path nil)]
+        {:lib-map lib-map
+         :classpath cp}))))
+
+#_(
+   (resolve-deps {:src ["/tmp/src"]
+                  :deps {'com.cognitect/transit-java {:mvn/version "0.8.332", :deps/manifest :mvn, :paths ["/tmp/.cache/com/cognitect/transit-java/0.8.332/transit-java-0.8.332.jar"], :dependents ['com.cognitect/transit-clj]}}}
+                 "/tmp/war")
+
+   )
 
 (defn exploded-war
   "Write exploded war suitable for deployment to App Engine.
@@ -144,39 +152,88 @@
    :deps - deps map compatible with deps.edn
    :mvn/local-repo - local repo path for mnv deps
    :git/local-repo - local repo path for git deps
-   :cache-path - path of local cache; defaults to /tmp/.cache"
+   :default-cache - path of local cache; defaults to /tmp/.cache"
   [opts]
   (let [war-path (:target-path opts "/tmp")
-        classpath (resolve-deps opts war-path)]
-    (write-war opts war-path classpath)))
+        resolved-deps (resolve-deps opts war-path)
+        classpath (:classpath resolved-deps)]
+    (write-war opts war-path classpath)
+    resolved-deps))
 
 ;;;
+
+(defn remaining-files [opts]
+  (let [bucket (get-in opts [:code-bucket])
+        prefix (get-in opts [:code-prefix])
+        remotes (->> (storage/objects bucket {:prefix prefix})
+                     (map :name)
+                     (map (fn [e] (-> e (clojure.string/split #"/") (last))))
+                     (set))
+        target-path (:target-path opts)]
+    (->> (io/file target-path)
+         (file-seq)
+         (filter (fn [e] (.isFile e)))
+         (filter (fn [e] (->> (.getName e) (contains? remotes) (not))))
+         #_(map (fn [e]
+                  (storage/put-large "staging.alpeware-jaq-runtime.appspot.com" (.getPath e) "/tmp/war" "apps/v19" {:callback storage/file-upload-done}))))))
+
+#_(defn upload-cb [{:keys [callback-args]}]
+    (debug "upload-cb" callback-args)
+    (upload callback-args))
 
 (defn upload
   "Upload app to storage bucket."
   [opts]
-  (let [bucket (get-in opts [:code-bucket])
+  (let [opts (or (:callback-args opts) opts)
+        bucket (get-in opts [:code-bucket])
         prefix (get-in opts [:code-prefix])
-        src-dir (:target-path opts "/tmp")]
-    (debug "Uploading app [this may take a while]...")
-    (storage/copy src-dir bucket prefix)
-    (debug "File counter" @storage/file-counter)
+        src-dir (:target-path opts "/tmp")
+        file (->> (remaining-files opts)
+                  (sort-by (fn [e] (.length e)))
+                  (take 1)
+                  (first))
+        uploaded-file (io/file (:uploaded-file opts))]
+    (debug "uploading" file)
+    (when uploaded-file
+      (debug "deleting" uploaded-file)
+      (io/delete-file uploaded-file true))
+    (when file
+      (storage/put-large bucket (.getPath file) src-dir prefix
+                         {:callback jaq.deploy/upload
+                          :args (merge opts {:uploaded-file (.getPath file)})})
+      #_(storage/put-large bucket (.getPath file) src-dir prefix))
+    #_(debug "Uploading app [this may take a while]...")
+    #_(storage/copy src-dir bucket prefix)
+    #_(debug "File counter" @storage/file-counter)
     #_(loop []
         (debug "File counter" @storage/file-counter)
         (when-not (zero? @storage/file-counter)
           (sleep)
           (recur)))))
 
+#_(
+   (clojure.repl/demunge (str upload))
+   (io/file nil)
+   )
+
 (defn deploy
   "Deploys to App Engine."
-  [opts]
+  [service opts]
   (let [project-id (get-in opts [:project-id])
         bucket (get-in opts [:code-bucket])
         prefix (get-in opts [:code-prefix])
         version (get-in opts [:version])
         servlet (get-in opts [:servlet] "servlet")]
     (debug "Deploying app...")
-    (defer {:fn ::op :op (admin/deploy-app project-id bucket prefix version servlet)})))
+    #_(with-redefs [jaq.services.appengine-admin/app-defaults jaq.deploy/service-defaults
+                  jaq.services.appengine-admin/deploy jaq.deploy/deploy-service]
+      (defer {:fn ::op
+              :op (admin/deploy-app project-id
+                                    bucket
+                                    prefix
+                                    version
+                                    servlet)}))
+    (defer {:fn ::op :op (admin/deploy-app project-id service bucket prefix version servlet)})))
 
 (defn migrate
   "Migrate traffic to application version."
@@ -209,24 +266,33 @@
 
 (defn prepare-src [opts]
   (let [default-cache (or (:default-cache opts) "/tmp/.cache")]
-    (storage/get-files (:src-bucket opts) (:src-prefix opts) default-cache)))
+    (storage/get-files (:src-bucket opts) (:src-prefix opts) default-cache)
+    (storage/get-files (:resource-bucket opts) (:resource-prefix opts) default-cache)))
 
+(defn clear-cache [opts]
+  (let [default-cache (or (:default-cache opts) "/tmp/.cache")]
+    (->> (io/file default-cache)
+         (file-seq)
+         (reverse)
+         (map (fn [e] (io/delete-file e)))
+         (count))))
 ;;;
 
 (defmethod defer-fn ::deps [{:keys [config]}]
   (debug ::deps config)
   (prepare-src config)
   (exploded-war config)
-  #_(defer {:fn ::upload :config config})
+  #_(clear-cache config)
+  #_(defer {:fn ::upload :config config :delay-ms (* 5 1000)})
   #_(upload config))
 
 (defmethod defer-fn ::upload [{:keys [config]}]
   (debug ::upload config)
   (upload config))
 
-(defmethod defer-fn ::deploy [{:keys [config]}]
+(defmethod defer-fn ::deploy [{:keys [service config]}]
   (debug ::deploy config)
-  (deploy config))
+  (deploy service config))
 
 (defmethod defer-fn ::migrate [{:keys [config]}]
   (debug ::migrate config)
@@ -241,16 +307,74 @@
    *ns*
    (in-ns 'jaq.deploy)
 
-   (let [deps-edn (parse-config (jaq.repl/get-file "deps.edn"))
-         opts (merge {:server-ns "jaq.runtime"
-                      :target-path "/tmp/war"
-                      :src ["/tmp/resources" "/tmp/.cache/src"]}
-                     (parse-config (jaq.repl/get-file "jaq-config.edn")))
-         config (merge deps-edn opts)]
+   (let [config (merge {:server-ns "jaq.runtime"
+                        :target-path "/tmp/war"
+                        :src ["/tmp/.cache/resources" "/tmp/.cache/src"]}
+                       (parse-config (jaq.repl/get-file "jaq-config.edn")))]
      #_(defer {:fn ::deps :config config})
      #_(defer {:fn ::upload :config config})
-     #_(defer {:fn ::deploy :config config})
-     (defer {:fn ::migrate :config config}))
+     (defer {:fn ::deploy :service :default :config config})
+     #_(defer {:fn ::migrate :config config}))
+
+   (slurp "https://alpeware-jaq-runtime.appspot.com/public/foo.txt")
+
+   (io/resource "public/foo.txt")
+
+   (defn service-defaults [version servlet]
+     {:id version
+      :runtime "java8"
+      :threadsafe true
+      :basicScaling {:maxInstances 1}
+      :instanceClass "B1"
+      :handlers [{:urlRegex "/.*"
+                  :script {:scriptPath servlet}}]})
+
+   (defn deploy-service [project-id app-map]
+     (admin/action :post
+                   [:apps project-id :services :service1 :versions]
+                   {:content-type :json
+                    :body (clojure.data.json/write-str app-map)}))
+
+   (with-redefs [jaq.services.appengine-admin/app-defaults jaq.deploy/service-defaults
+                 jaq.services.appengine-admin/deploy jaq.deploy/deploy-service]
+     (admin/deploy-app (:project-id jaq)
+                       (:bucket jaq)
+                       (:prefix jaq)
+                       (:version jaq)
+                       "servlet"))
+
+   (defn delete [project-id service]
+     (admin/action :delete [:apps project-id :services service]))
+   (delete (:project-id jaq) :service1)
+
+   (def rd (clojure.edn/read-string (slurp "/tmp/.cache/resolved-deps.edn")))
+
+   (resolve-deps {})
+   (->> rd
+        :lib-map
+        (keys)
+        (first)
+        #_(get 'com.cognitect/transit-java)
+        (get (:lib-map rd)))
+
+   (->> rd
+        :lib-map
+        (vals)
+        (filter (fn [e] (->> e :dependents (empty?))))
+        #_(first)
+        #_(count))
+
+   (->> rd
+        :classpath
+        )
+
+   (keys rd)
+
+
+   (->> "{:foo foo.bar}"
+        #_(parse-config)
+        #_(pr-str)
+        (read-string))
 
    (->> (io/file "/tmp/war/WEB-INF/lib")
         (file-seq)
@@ -302,6 +426,14 @@
         (reverse)
         (map (fn [e] (io/delete-file e)))
         (count)
+        )
+
+   (->> (io/file "/tmp/.cache/")
+        (file-seq)
+        (reverse)
+        (filter (fn [e] (-> (.getPath e) (clojure.string/ends-with? "cp"))))
+        #_(map (fn [e] (io/delete-file e)))
+        #_(count)
         )
    (slurp "/tmp/war/WEB-INF/web.xml")
    (slurp "https://repo1.maven.org/")
@@ -360,6 +492,10 @@
         (io/file))
    (file-seq)
 
+   (->> (io/file "/tmp/war")
+        (file-seq)
+        #_(count))
+
    *ns*
    (java.net.InetAddress/getAllByName "repo1.maven.org")
    (java.net.InetAddress/getAllByName "google.com")
@@ -367,6 +503,10 @@
 
    (->> (System/getProperties)
         (keys))
+
+   (admin/locations "alpeware-jaq-runtime")
+   (resource/projects)
+
 
    )
 
