@@ -3,6 +3,7 @@
    [clojure.main :as main]
    [clojure.walk :refer [keywordize-keys]]
    [hiccup.page :refer [html5 include-css include-js]]
+   [ring.util.response :as response]
    [jaq.services.storage :as storage]
    [taoensso.timbre :as timbre
     :refer [log  trace  debug  info  warn  error  fatal  report]])
@@ -90,13 +91,30 @@
        (ring-response/response result)
        "application/edn")))
 
+(defn as-html [html]
+  (response/content-type
+   (response/response html)
+   "text/html"))
+
 (defn landing-page []
-  (html5
-   [:head
-    [:title "JAQ Runtime"]]
-   [:body
-    [:h1 "JAQ Runtime REPL"]]))
+  (as-html
+   (html5
+    [:head
+     [:title "JAQ Runtime"]]
+    [:body
+     [:h1 "JAQ Runtime REPL"]
+     [:p "Introducing a CLJC REPL in the cloud."]])))
 
 (defn index-handler
   [request]
-  {:status 200 :body (landing-page)})
+  (landing-page))
+
+#_(
+
+   *ns*
+   (in-ns 'jaq.repl)
+
+   (slurp "https://service-dot-alpeware-jaq-runtime.appspot.com/public/foo.txt")
+
+
+   )

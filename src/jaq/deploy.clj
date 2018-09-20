@@ -21,6 +21,7 @@
 #_(
 
    (in-ns 'jaq.deploy)
+   (io/resource "jaq-repl.el")
 
    )
 
@@ -237,10 +238,10 @@
 
 (defn migrate
   "Migrate traffic to application version."
-  [opts]
+  [service opts]
   (let [project-id (get-in opts [:project-id])
         version (get-in opts [:version])]
-    (defer {:fn ::op :op (admin/migrate project-id version)})))
+    (defer {:fn ::op :op (admin/migrate project-id service version)})))
 
 (defn create-project
   "Create project."
@@ -294,9 +295,9 @@
   (debug ::deploy config)
   (deploy service config))
 
-(defmethod defer-fn ::migrate [{:keys [config]}]
+(defmethod defer-fn ::migrate [{:keys [service config]}]
   (debug ::migrate config)
-  (migrate config))
+  (migrate service config))
 
 (defmethod defer-fn ::op [{:keys [op]}]
   (debug ::op op)
@@ -307,14 +308,18 @@
    *ns*
    (in-ns 'jaq.deploy)
 
+   (admin/delete "alpeware-jaq-runtime" :service1)
+
    (let [config (merge {:server-ns "jaq.runtime"
                         :target-path "/tmp/war"
                         :src ["/tmp/.cache/resources" "/tmp/.cache/src"]}
                        (parse-config (jaq.repl/get-file "jaq-config.edn")))]
      #_(defer {:fn ::deps :config config})
      #_(defer {:fn ::upload :config config})
-     (defer {:fn ::deploy :service :default :config config})
-     #_(defer {:fn ::migrate :config config}))
+     #_(defer {:fn ::deploy :service :service :config config})
+     #_(defer {:fn ::deploy :service :default :config config})
+     (defer {:fn ::migrate :service :service :config config})
+     (defer {:fn ::migrate :service :default :config config}))
 
    (slurp "https://alpeware-jaq-runtime.appspot.com/public/foo.txt")
 
