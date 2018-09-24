@@ -103,7 +103,7 @@
      [:title "JAQ Runtime"]]
     [:body
      [:h1 "JAQ Runtime REPL"]
-     [:p "Introducing a CLJC REPL in the cloud."]])))
+     [:p "Introducing a Clojure Cloud REPL for the Google App Engine."]])))
 
 (defn index-handler
   [request]
@@ -114,7 +114,7 @@
    *ns*
    (in-ns 'jaq.repl)
 
-   (slurp "https://service-dot-alpeware-jaq-runtime.appspot.com/public/foo.txt")
+   (slurp "https://alpeware-jaq-runtime.appspot.com/public/foo.txt")
 
 
    )

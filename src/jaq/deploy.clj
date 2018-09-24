@@ -48,7 +48,7 @@
     (string/replace xml #"xmlns:a=" "xmlns=")))
 
 (defn copy-file [source-path dest-path]
-  (prn "copying" source-path dest-path)
+  (debug "copying" source-path dest-path)
   (io/copy (io/file source-path) (io/file dest-path)))
 
 (defn copy-dir [source-path dest-path]
@@ -108,31 +108,24 @@
   (write-manifest opts war-path)
   (write-web-xml opts war-path)
   (write-appengine-web-xml opts war-path)
-  (copy-libs opts war-path classpath)
+  (copy-libs opts war-path classpath))
 
-  #_(with-open [war-stream (-> (io/output-stream war-path)
-                               (JarOutputStream. (make-manifest (:manifest opts))))]
-      (doto war-stream
-        (write-entry "WEB-INF/web.xml" (string-input-stream (make-web-xml opts)))
-        (and (:compile-path opts)
-             (dir-entry opts "WEB-INF/classes/" (:compile-path opts))))
-      (doseq [path (distinct (:resource-paths opts))
-              :when path]
-        (dir-entry war-stream opts "WEB-INF/classes/" path))
-      (doseq [pp-fn postprocess-fns]
-        (pp-fn opts war-stream))
-      war-stream))
-
-(defn resolve-deps [opts war-path]
+(defn resolve-deps [opts service war-path]
   (let [default-cache (:default-cache opts "/tmp/.cache")
-        src-path (:src opts)
+        paths (->> (:src opts)
+                   (concat (get-in opts [:aliases service :extra-paths]))
+                   (distinct))
+        src-path (->> paths
+                      (map (fn [e]
+                             (string/join File/separator [default-cache e]))))
         deps-map {:paths [war-path]
                   :mvn/repos mvn/standard-repos
                   :mvn/local-repo (:mvn/local-repo opts default-cache)
-                  :deps (:deps opts)}]
+                  :deps (:deps opts)}
+        args-map (get-in opts [:aliases service])]
     (with-redefs [clojure.tools.gitlibs.impl/cache-dir (fn []
                                                          (:git/local-repo opts default-cache))]
-      (let [lib-map (deps/resolve-deps deps-map nil)
+      (let [lib-map (deps/resolve-deps deps-map args-map)
             cp (deps/make-classpath lib-map src-path nil)]
         {:lib-map lib-map
          :classpath cp}))))
@@ -154,9 +147,9 @@
    :mvn/local-repo - local repo path for mnv deps
    :git/local-repo - local repo path for git deps
    :default-cache - path of local cache; defaults to /tmp/.cache"
-  [opts]
+  [opts service]
   (let [war-path (:target-path opts "/tmp")
-        resolved-deps (resolve-deps opts war-path)
+        resolved-deps (resolve-deps opts service war-path)
         classpath (:classpath resolved-deps)]
     (write-war opts war-path classpath)
     resolved-deps))
@@ -182,67 +175,7 @@
     (debug "upload-cb" callback-args)
     (upload callback-args))
 
-(defn upload
-  "Upload app to storage bucket."
-  [opts]
-  (let [opts (or (:callback-args opts) opts)
-        bucket (get-in opts [:code-bucket])
-        prefix (get-in opts [:code-prefix])
-        src-dir (:target-path opts "/tmp")
-        file (->> (remaining-files opts)
-                  (sort-by (fn [e] (.length e)))
-                  (take 1)
-                  (first))
-        uploaded-file (io/file (:uploaded-file opts))]
-    (debug "uploading" file)
-    (when uploaded-file
-      (debug "deleting" uploaded-file)
-      (io/delete-file uploaded-file true))
-    (when file
-      (storage/put-large bucket (.getPath file) src-dir prefix
-                         {:callback jaq.deploy/upload
-                          :args (merge opts {:uploaded-file (.getPath file)})})
-      #_(storage/put-large bucket (.getPath file) src-dir prefix))
-    #_(debug "Uploading app [this may take a while]...")
-    #_(storage/copy src-dir bucket prefix)
-    #_(debug "File counter" @storage/file-counter)
-    #_(loop []
-        (debug "File counter" @storage/file-counter)
-        (when-not (zero? @storage/file-counter)
-          (sleep)
-          (recur)))))
-
-#_(
-   (clojure.repl/demunge (str upload))
-   (io/file nil)
-   )
-
-(defn deploy
-  "Deploys to App Engine."
-  [service opts]
-  (let [project-id (get-in opts [:project-id])
-        bucket (get-in opts [:code-bucket])
-        prefix (get-in opts [:code-prefix])
-        version (get-in opts [:version])
-        servlet (get-in opts [:servlet] "servlet")]
-    (debug "Deploying app...")
-    #_(with-redefs [jaq.services.appengine-admin/app-defaults jaq.deploy/service-defaults
-                  jaq.services.appengine-admin/deploy jaq.deploy/deploy-service]
-      (defer {:fn ::op
-              :op (admin/deploy-app project-id
-                                    bucket
-                                    prefix
-                                    version
-                                    servlet)}))
-    (defer {:fn ::op :op (admin/deploy-app project-id service bucket prefix version servlet)})))
-
-(defn migrate
-  "Migrate traffic to application version."
-  [service opts]
-  (let [project-id (get-in opts [:project-id])
-        version (get-in opts [:version])]
-    (defer {:fn ::op :op (admin/migrate project-id service version)})))
-
+;; TODO(alpeware): use deferred
 (defn create-project
   "Create project."
   [opts]
@@ -254,6 +187,7 @@
         (sleep)
         (recur (resource/operation (:name op)))))))
 
+;; TODO(alpeware): use deferred
 (defn create-application
   "Create application."
   [opts]
@@ -265,10 +199,15 @@
         (sleep)
         (recur (admin/operation (:name op)))))))
 
-(defn prepare-src [opts]
-  (let [default-cache (or (:default-cache opts) "/tmp/.cache")]
-    (storage/get-files (:src-bucket opts) (:src-prefix opts) default-cache)
-    (storage/get-files (:resource-bucket opts) (:resource-prefix opts) default-cache)))
+(defn prepare-src [opts service]
+  (let [default-cache (or (:default-cache opts) "/tmp/.cache")
+        paths (->> (:src opts)
+                   (concat (get-in opts [:aliases service :extra-paths]))
+                   (distinct))]
+    (->> paths
+         (map (fn [e]
+                (storage/get-files (:src-bucket opts) e default-cache)))
+         (dorun))))
 
 (defn clear-cache [opts]
   (let [default-cache (or (:default-cache opts) "/tmp/.cache")]
@@ -279,51 +218,119 @@
          (count))))
 ;;;
 
-(defmethod defer-fn ::deps [{:keys [config]}]
+(defmethod defer-fn ::deps [{:keys [service config cont] :as params}]
   (debug ::deps config)
-  (prepare-src config)
-  (exploded-war config)
+  (prepare-src config service)
+  (exploded-war config service)
   #_(clear-cache config)
-  #_(defer {:fn ::upload :config config :delay-ms (* 5 1000)})
-  #_(upload config))
+  (when-not (empty? cont)
+    (defer (merge params
+                  {:fn (first cont)
+                   :cont (rest cont)})
+      {:delay-ms (* 5 1000)})))
 
-(defmethod defer-fn ::upload [{:keys [config]}]
-  (debug ::upload config)
-  (upload config))
+;; TODO(alpeware): consider re-factoring storage callback signature to require a
+;;                 deferred instead of a fn
+(defn upload
+  "Callback fn for storage"
+  [params]
+  (defer (merge params {:fn ::upload})))
 
-(defmethod defer-fn ::deploy [{:keys [service config]}]
-  (debug ::deploy config)
-  (deploy service config))
+(defmethod defer-fn ::upload [{:keys [service config cont] :as params}]
+  (debug ::upload params)
+  (let [config (or (:callback-args params) config)
+        bucket (get-in config [:code-bucket])
+        prefix (get-in config [:code-prefix])
+        src-dir (:target-path config "/tmp")
+        file (->> (remaining-files config)
+                  (sort-by (fn [e] (.length e)))
+                  (take 1)
+                  (first))
+        uploaded-file (io/file (:uploaded-file config))]
+    (debug "uploading" file)
+    (when uploaded-file
+      (debug "deleting" uploaded-file)
+      (io/delete-file uploaded-file true))
+    (if file
+      (storage/put-large bucket (.getPath file) src-dir prefix
+                         {:callback jaq.deploy/upload
+                          :args (merge params {:uploaded-file (.getPath file)})})
+      (when-not (empty? cont)
+        (defer (merge params
+                      {:fn (first cont) :cont (rest cont)}))))))
 
-(defmethod defer-fn ::migrate [{:keys [service config]}]
-  (debug ::migrate config)
-  (migrate service config))
+(defmethod defer-fn ::deploy [{:keys [service config cont] :as params}]
+  (debug ::deploy params)
+  (let [project-id (get-in config [:project-id])
+        bucket (get-in config [:code-bucket])
+        prefix (get-in config [:code-prefix])
+        version (get-in config [:version])
+        servlet (get-in config [:servlet] "servlet")
+        op (admin/deploy-app project-id service bucket prefix version servlet)]
+    (defer (merge params {:fn ::op :op op}))))
 
-(defmethod defer-fn ::op [{:keys [op]}]
-  (debug ::op op)
-  (when-not (or (:done op) (:error op))
-    (defer {:fn ::op :op (admin/operation (:name op))} {:delay-ms 2000})))
+(defmethod defer-fn ::migrate [{:keys [service config cont] :as params}]
+  (debug ::migrate params)
+  (let [project-id (get-in config [:project-id])
+        version (get-in config [:version])
+        op (admin/migrate project-id service version)]
+    (defer (merge params {:fn ::op :op op}))))
+
+(defmethod defer-fn ::op [{:keys [op service config cont] :as params}]
+  (debug ::op params)
+  (if-not (or (:done op) (:error op))
+    (defer (merge params {:op (admin/operation (:name op))}) {:delay-ms 2000})
+    (when (and (not (empty? cont)) (not (:error op)))
+      (defer (merge params {:fn (first cont) :cont (rest cont)})))))
+
+(defn deploy-all [config]
+  (let [services (->> config :aliases (keys))]
+    (defer {:fn ::deploy-all :config config :services services})))
+
+(defmethod defer-fn ::deploy-all [{:keys [config services] :as params}]
+  (let [service (->> services (first))
+        services (->> services (rest))]
+    (debug ::deploy-all service config)
+    (when service
+      (defer (merge params {:fn ::deps :service service :services services
+                            :cont [::upload ::deploy ::migrate ::deploy-all]})))))
 
 #_(
    *ns*
    (in-ns 'jaq.deploy)
 
-   (admin/delete "alpeware-jaq-runtime" :service1)
-
-   (let [config (merge {:server-ns "jaq.runtime"
-                        :target-path "/tmp/war"
-                        :src ["/tmp/.cache/resources" "/tmp/.cache/src"]}
-                       (parse-config (jaq.repl/get-file "jaq-config.edn")))]
-     #_(defer {:fn ::deps :config config})
-     #_(defer {:fn ::upload :config config})
+   (let [config (parse-config (jaq.repl/get-file "jaq-config.edn"))
+         config (merge config
+                       {:server-ns "jaq.runtime"
+                        :target-path "/tmp/war"})]
+     #_(defer {:fn ::deps :config config :service :default})
+     (defer {:fn ::deps :config config :service :service})
+     #_(defer {:fn ::upload :config config :service :service})
      #_(defer {:fn ::deploy :service :service :config config})
      #_(defer {:fn ::deploy :service :default :config config})
-     (defer {:fn ::migrate :service :service :config config})
-     (defer {:fn ::migrate :service :default :config config}))
+     #_(defer {:fn ::migrate :service :service :config config})
+     #_(defer {:fn ::migrate :service :default :config config}))
 
-   (slurp "https://alpeware-jaq-runtime.appspot.com/public/foo.txt")
+   (let [config (parse-config (jaq.repl/get-file "jaq-config.edn"))
+         config (merge config
+                       {:server-ns "jaq.runtime"
+                        :target-path "/tmp/war"})]
+     (deploy-all config)
+     #_(defer {:fn ::deploy-all :config config}))
+
+   (util)
+   (slurp "https://v28-dot-alpeware-jaq-runtime.appspot.com/public/baz.txt")
+   (slurp "https://v28-dot-alpeware-jaq-runtime.appspot.com/")
+   (slurp "https://v28-dot-alpeware-jaq-runtime.appspot.com/repl")
+
+   (->> (slurp "https://service-dot-alpeware-jaq-runtime.appspot.com/")
+        (storage/put-simple (str "staging." (storage/default-bucket))
+                            "apps/v28/WEB-INF/classes/public/index.html"
+                            "text/html"))
 
    (io/resource "public/foo.txt")
+
+   (admin/delete "alpeware-jaq-runtime" :service1)
 
    (defn service-defaults [version servlet]
      {:id version
@@ -477,29 +484,235 @@
         (map (fn [e] (.toURL e)))
         (clojure.tools.deps.alpha.repl/add-loader-url))
 
-   (clojure.java.classpath/classpath)
+   (->> (clojure.java.classpath/classpath)
+        (map (fn [e] (.getPath e))))
 
    (defn add-system-classpath
      "Add an url path to the system class loader"
-     [s]
-     (let [field (aget (.getDeclaredFields java.net.URLClassLoader) 0)
-           url (-> s (io/file) (.toURL))]
-       (.setAccessible field true)
-       (let [ucp (.get field (ClassLoader/getSystemClassLoader))]
-         (.addURL ucp url))))
+     [url]
+     (let [^java.net.URLClassLoader cl (-> (ClassLoader/getSystemClassLoader))
+           clazz (.getClass cl)
+           method (-> clazz
+                      (.getSuperclass)
+                      (.getDeclaredMethod "addURL" (into-array Class [java.net.URL])))
+           u (if (string? url) (java.net.URL. url) url)]
+       (.setAccessible method true)
+       (. method (invoke cl (into-array Object [u])))))
 
-   (add-system-classpath "/tmp/.classes/")
+   (with-redefs [clojure.tools.deps.alpha.repl/add-loader-url jaq.deploy/add-system-classpath]
+     (clojure.tools.deps.alpha.repl/add-lib 'org.clojure/clojurescript {:mvn/version "1.10.339"}))
+
+   (add-system-classpath "http://central.maven.org/maven2/com/cemerick/pomegranate/1.0.0/pomegranate-1.0.0.jar")
+
+
+   (binding [*compile-path* "/tmp"]
+     (require 'foo)
+     #_(load "cemerick/pomegranate"))
+
+   (->> (all-ns)
+        (map ns-name)
+        #_count)
+
+   (foo/bar)
+
+   (->> (java.util.jar.JarFile. "/tmp/pomegranate1.jar")
+        (.entries)
+        #_(seq)
+        #_count)
+
+   (load "cemerick/pomegranate")
+   (require 'cemerick.pomegranate)
+   (io/resource "cemerick/pomegranate.clj")
+
+
+   (add-system-classpath "file:/tmp/pomegranate1.jar")
+   (add-system-classpath "file:/tmp/")
+   (spit "/tmp/foo.txt" "foo bar")
+
+   (spit "/tmp/foo.clj" "(ns foo) (defn bar [] :bar)")
+
+   (require 'foo)
+   (foo.bar)
+
+   (io/resource "foo.clj")
+   (io/resource "pomegranate.jar")
+
+   (require 'cemerick.pomegranate)
+
+   (io/resource "cemerick/pomegranate.clj")
+
+   (seq (.getURLs (java.lang.ClassLoader/getSystemClassLoader)))
+
+   (io/resource "pomegranate.jar")
+
    (load "/jaq/foo")
    (io/resource "jaq/foo.clj")
    (jaq.foo/bar)
 
-   (->> "/tmp/src"
-        (io/file))
-   (file-seq)
+   (->> "/base"
+        (io/file)
+        (file-seq))
+
+
 
    (->> (io/file "/tmp/war")
         (file-seq)
         #_(count))
+
+   (defn add-loader-url
+     "Add url string or URL to the highest level DynamicClassLoader url set."
+     [url]
+     (let [u (if (string? url) (java.net.URL. url) url)
+           loader (loop [loader (.getContextClassLoader (Thread/currentThread))]
+                    (let [parent (.getParent loader)]
+                      (if (instance? clojure.lang.DynamicClassLoader parent)
+                        (recur parent)
+                        loader)))]
+       #_(.getExtURLs loader)
+       #_(->> loader
+              (clojure.reflect/reflect)
+              :members
+              #_(filter (fn [e] (contains? (:flags e) :public)))
+              #_(map :name))
+       #_(class loader)
+       #_(instance? java.net.URLClassLoader loader)
+       #_(.addURL loader u)
+       #_(.addExtURL u)
+       #_(instance? clojure.lang.DynamicClassLoader loader)
+       (if (instance? clojure.lang.DynamicClassLoader loader)
+         (.addURL ^clojure.lang.DynamicClassLoader loader u)
+         (throw (IllegalAccessError. "Context classloader is not a DynamicClassLoader")))))
+
+
+   (let [_ (->> (.getContextClassLoader (Thread/currentThread))
+                (clojure.lang.DynamicClassLoader.)
+                (.setContextClassLoader (Thread/currentThread)))]
+     (add-loader-url "http://central.maven.org/maven2/com/cemerick/pomegranate/1.0.0/pomegranate-1.0.0.jar"))
+
+   (add-system-classpath "http://central.maven.org/maven2/com/cemerick/pomegranate/1.0.0/pomegranate-1.0.0.jar")
+   (add-system-classpath "/tmp/pomegranate.jar")
+
+   (->> (slurp "http://central.maven.org/maven2/com/cemerick/pomegranate/1.0.0/pomegranate-1.0.0.jar")
+        (spit "/tmp/pomegranate1.jar"))
+
+   (let [uri "http://central.maven.org/maven2/org/clojure/clojurescript/1.10.339/clojurescript-1.10.339.jar"
+         file "/tmp/.jar"]
+     (with-open [in (io/input-stream uri)
+                 out (io/output-stream file)]
+       (io/copy in out)))
+
+   (io/copy
+    (.getFile (io/as-url "http://central.maven.org/maven2/com/cemerick/pomegranate/1.0.0/pomegranate-1.0.0.jar"))
+    (io/file "/tmp/pomegranate.jar"))
+
+   (->> (io/file "/tmp")
+        (file-seq)
+        (map (fn [e] [(.getPath e) (.length e)])))
+
+   (slurp "/tmp/pomegranate.jar")
+
+   (require 'cemerick.pomegranate)
+
+
+
+   (java.lang.ClassLoader/getSystemClassLoader)
+
+   (let [_ (->> (.getContextClassLoader (Thread/currentThread))
+                (clojure.lang.DynamicClassLoader.)
+                (.setContextClassLoader (Thread/currentThread)))]
+     (->> (loop [v []
+                 loader (.getContextClassLoader (Thread/currentThread))]
+            (let [parent (.getParent loader)]
+              (if (instance? java.net.URLClassLoader parent)
+                (recur (conj v loader) parent)
+                v)))
+          (map (fn [e] (class e)))
+          ))
+
+   (->> (loop [v []
+               loader (.getContextClassLoader (Thread/currentThread))]
+          (let [parent (.getParent loader)]
+            (if (instance? java.net.URLClassLoader parent)
+              (recur (conj v loader) parent)
+              v)))
+        (map (fn [e] (class e)))
+        )
+
+   (->> (loop [v []
+               loader (.getContextClassLoader (Thread/currentThread))]
+          (let [parent (.getParent loader)]
+            (if (instance? java.net.URLClassLoader parent)
+              (recur (conj v loader) parent)
+              v)))
+        #_(map (fn [e] (class e)))
+        (first)
+        (clojure.reflect/reflect)
+        (:members)
+        (map :name))
+
+   (let [_ (->> (.getContextClassLoader (Thread/currentThread))
+                (clojure.lang.DynamicClassLoader.)
+                (.setContextClassLoader (Thread/currentThread)))]
+     (->> (loop [v []
+                 loader (.getContextClassLoader (Thread/currentThread))]
+            (let [parent (.getParent loader)]
+              (if (instance? java.net.URLClassLoader parent)
+                (recur (conj v loader) parent)
+                v)))
+          #_(first)
+          #_(.getURLs)
+          #_(map (fn [e] (.getPath e)))
+          ))
+
+   (let [_ (->> (.getContextClassLoader (Thread/currentThread))
+                (clojure.lang.DynamicClassLoader.)
+                (.setContextClassLoader (Thread/currentThread)))]
+     (.addURL (.getContextClassLoader (Thread/currentThread)) (-> (io/file "/tmp/pomegranate.jar") (.toURL)))
+     (require 'cemerick.pomegranate)
+     )
+
+   (->> (io/file "/tmp/")
+        (file-seq))
+
+   (->> (.getContextClassLoader (Thread/currentThread))
+        (clojure.lang.DynamicClassLoader.)
+        (.setContextClassLoader (Thread/currentThread)))
+
+   (->> (.getContextClassLoader (Thread/currentThread))
+        (clojure.reflect/reflect)
+        :members
+        (map :name))
+
+   (->> (.getContextClassLoader (Thread/currentThread))
+        (reduce (fn [e f]))
+        (clojure.reflect/reflect)
+        :members
+        (map :name))
+
+   (->> (.getContextClassLoader (Thread/currentThread))
+        (.getURLs)
+        (map (fn [e] (.getPath e))))
+
+
+   (->> (java.lang.ClassLoader/getSystemClassLoader)
+        (clojure.reflect/reflect)
+        #_:members
+        #_(filter (fn [e] (contains? (:flags e) :public)))
+        #_(map :name))
+
+   (->> com.google.apphosting.runtime.ApplicationClassLoader
+        (clojure.reflect/reflect)
+        :members
+        #_(filter (fn [e] (contains? (:flags e) :public)))
+        (map :name))
+
+   (supers com.google.apphosting.runtime.ApplicationClassLoader)
+
+   (->> (.getDeclaredFields com.google.apphosting.runtime.ApplicationClassLoader)
+        (map (fn [e] (.getName e))))
+
+   (->> (.getDeclaredMethods com.google.apphosting.runtime.ApplicationClassLoader)
+        (map (fn [e] (.getName e))))
 
    *ns*
    (java.net.InetAddress/getAllByName "repo1.maven.org")
@@ -507,7 +720,8 @@
    (System/getProperty "sun.net.spi.nameservice.nameservers")
 
    (->> (System/getProperties)
-        (keys))
+        (keys)
+        (sort))
 
    (admin/locations "alpeware-jaq-runtime")
    (resource/projects)
