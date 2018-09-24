@@ -156,6 +156,24 @@
 
 ;;;
 
+(defn prepare-src [opts service]
+  (let [default-cache (or (:default-cache opts) "/tmp/.cache")
+        paths (->> (:src opts)
+                   (concat (get-in opts [:aliases service :extra-paths]))
+                   (distinct))]
+    (->> paths
+         (map (fn [e]
+                (storage/get-files (:src-bucket opts) e default-cache)))
+         (dorun))))
+
+(defn clear-cache [opts]
+  (let [default-cache (or (:default-cache opts) "/tmp/.cache")]
+    (->> (io/file default-cache)
+         (file-seq)
+         (reverse)
+         (map (fn [e] (io/delete-file e)))
+         (count))))
+
 (defn remaining-files [opts]
   (let [bucket (get-in opts [:code-bucket])
         prefix (get-in opts [:code-prefix])
@@ -199,23 +217,6 @@
         (sleep)
         (recur (admin/operation (:name op)))))))
 
-(defn prepare-src [opts service]
-  (let [default-cache (or (:default-cache opts) "/tmp/.cache")
-        paths (->> (:src opts)
-                   (concat (get-in opts [:aliases service :extra-paths]))
-                   (distinct))]
-    (->> paths
-         (map (fn [e]
-                (storage/get-files (:src-bucket opts) e default-cache)))
-         (dorun))))
-
-(defn clear-cache [opts]
-  (let [default-cache (or (:default-cache opts) "/tmp/.cache")]
-    (->> (io/file default-cache)
-         (file-seq)
-         (reverse)
-         (map (fn [e] (io/delete-file e)))
-         (count))))
 ;;;
 
 (defmethod defer-fn ::deps [{:keys [service config cont] :as params}]
@@ -234,7 +235,8 @@
 (defn upload
   "Callback fn for storage"
   [params]
-  (defer (merge params {:fn ::upload})))
+  (debug :callback params)
+  (defer (merge (:callback-args params) {:fn ::upload})))
 
 (defmethod defer-fn ::upload [{:keys [service config cont] :as params}]
   (debug ::upload params)
