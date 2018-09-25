@@ -5,6 +5,7 @@
    [hiccup.page :refer [html5 include-css include-js]]
    [ring.util.response :as response]
    [jaq.services.storage :as storage]
+   [jaq.services.util :as util]
    [taoensso.timbre :as timbre
     :refer [log  trace  debug  info  warn  error  fatal  report]])
   (:import
@@ -72,7 +73,7 @@
         [session eval-fn] (when (= :clj repl-type)
                             [(get @repl-sessions device-id (new-clj-session))
                              eval-clj])
-        evaled (if (= repl-token (System/getProperty "JAQ_REPL_TOKEN"))
+        evaled (if (= repl-token (:JAQ_REPL_TOKEN util/env))
                    (try
                      (eval-fn session form)
                     (catch Throwable t t))
@@ -85,11 +86,7 @@
       (swap! repl-sessions assoc device-id session))
 
     (debug "edn" params evaled)
-    {:status 200 :body result}
-    #_(http/edn-response result)
-    #_(ring-response/content-type
-       (ring-response/response result)
-       "application/edn")))
+    {:status 200 :body result}))
 
 (defn as-html [html]
   (response/content-type

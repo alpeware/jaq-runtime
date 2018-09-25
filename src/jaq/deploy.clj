@@ -28,8 +28,7 @@
 (defn make-appengine-web-xml [opts]
   (let [{:keys [application-name
                 java-runtime
-                version
-                repl-token]
+                version]
          :or {application-name "jaq"
               java-runtime "java8"
               version "1"}} opts
@@ -43,7 +42,6 @@
                [:ssl-enabled "true"]
                [:threadsafe "true"]
                [:system-properties
-                [:property {:name "JAQ_REPL_TOKEN" :value repl-token}]
                 [:property {:name "appengine.api.urlfetch.defaultDeadline" :value "60"}]]]))]
     (string/replace xml #"xmlns:a=" "xmlns=")))
 
@@ -148,7 +146,7 @@
    :git/local-repo - local repo path for git deps
    :default-cache - path of local cache; defaults to /tmp/.cache"
   [opts service]
-  (let [war-path (:target-path opts "/tmp")
+  (let [war-path (:target-path opts "/tmp/war")
         resolved-deps (resolve-deps opts service war-path)
         classpath (:classpath resolved-deps)]
     (write-war opts war-path classpath)
@@ -172,7 +170,15 @@
          (file-seq)
          (reverse)
          (map (fn [e] (io/delete-file e)))
-         (count))))
+         (dorun))))
+
+(defn clear-war [opts]
+  (let [target-path (or (:target-path opts) "/tmp/war")]
+    (->> (io/file target-path)
+         (file-seq)
+         (reverse)
+         (map (fn [e] (io/delete-file e true)))
+         (dorun))))
 
 (defn remaining-files [opts]
   (let [bucket (get-in opts [:code-bucket])
@@ -221,6 +227,7 @@
 
 (defmethod defer-fn ::deps [{:keys [service config cont] :as params}]
   (debug ::deps config)
+  (clear-war config)
   (prepare-src config service)
   (exploded-war config service)
   #_(clear-cache config)
@@ -263,12 +270,7 @@
 
 (defmethod defer-fn ::deploy [{:keys [service config cont] :as params}]
   (debug ::deploy params)
-  (let [project-id (get-in config [:project-id])
-        bucket (get-in config [:code-bucket])
-        prefix (get-in config [:code-prefix])
-        version (get-in config [:version])
-        servlet (get-in config [:servlet] "servlet")
-        op (admin/deploy-app project-id service bucket prefix version servlet)]
+  (let [op (admin/deploy-app config)]
     (defer (merge params {:fn ::op :op op}))))
 
 (defmethod defer-fn ::migrate [{:keys [service config cont] :as params}]
@@ -305,13 +307,7 @@
          config (merge config
                        {:server-ns "jaq.runtime"
                         :target-path "/tmp/war"})]
-     #_(defer {:fn ::deps :config config :service :default})
-     (defer {:fn ::deps :config config :service :service})
-     #_(defer {:fn ::upload :config config :service :service})
-     #_(defer {:fn ::deploy :service :service :config config})
-     #_(defer {:fn ::deploy :service :default :config config})
-     #_(defer {:fn ::migrate :service :service :config config})
-     #_(defer {:fn ::migrate :service :default :config config}))
+     (defer {:fn ::deploy :config config :service :service :cont [::migrate]}))
 
    (let [config (parse-config (jaq.repl/get-file "jaq-config.edn"))
          config (merge config
@@ -725,9 +721,20 @@
         (keys)
         (sort))
 
+   (->> (System/getenv)
+        (into {})
+        (clojure.walk/keywordize-keys))
+
+   util/env
+
+   (def env
+     (delay
+      (->> (System/getenv)
+           (into {})
+           (clojure.walk/keywordize-keys))))
+
    (admin/locations "alpeware-jaq-runtime")
    (resource/projects)
-
 
    )
 
