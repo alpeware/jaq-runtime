@@ -270,7 +270,7 @@
 
 (defmethod defer-fn ::deploy [{:keys [service config cont] :as params}]
   (debug ::deploy params)
-  (let [op (admin/deploy-app config)]
+  (let [op (admin/deploy-app (merge config {:service service}))]
     (defer (merge params {:fn ::op :op op}))))
 
 (defmethod defer-fn ::migrate [{:keys [service config cont] :as params}]
@@ -307,7 +307,8 @@
          config (merge config
                        {:server-ns "jaq.runtime"
                         :target-path "/tmp/war"})]
-     (defer {:fn ::deploy :config config :service :service :cont [::migrate]}))
+     #_(defer {:fn ::deploy :config config :service :service :cont [::migrate]})
+     (defer {:fn ::deploy :config config :service :default :cont [::migrate]}))
 
    (let [config (parse-config (jaq.repl/get-file "jaq-config.edn"))
          config (merge config
