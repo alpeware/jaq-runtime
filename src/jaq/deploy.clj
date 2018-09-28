@@ -13,6 +13,7 @@
    [clojure.string :as string]
    [clojure.java.io :as io]
    [clojure.data.xml :as xml]
+   [cljs.build.api :as build]
    [taoensso.timbre :as timbre
     :refer [log  trace  debug  info  warn  error  fatal  report]])
   (:import
@@ -291,6 +292,7 @@
   (let [services (->> config :aliases (keys))]
     (defer {:fn ::deploy-all :config config :services services})))
 
+;; TODO(alpeware): add static assets
 (defmethod defer-fn ::deploy-all [{:keys [config services] :as params}]
   (let [service (->> services (first))
         services (->> services (rest))]
@@ -298,6 +300,12 @@
     (when service
       (defer (merge params {:fn ::deps :service service :services services
                             :cont [::upload ::deploy ::migrate ::deploy-all]})))))
+
+(defmethod defer-fn ::build [{:keys [src opts]
+                              :or {opts {:optimizations :advanced
+                                         :output-dir "/tmp/out"
+                                         :output-to "/tmp/out/app.js"}}}]
+  (build/build src opts))
 
 #_(
    *ns*
@@ -736,6 +744,29 @@
 
    (admin/locations "alpeware-jaq-runtime")
    (resource/projects)
+
+   (storage/get-files (storage/default-bucket) "src" "/tmp")
+   (->> (clojure.java.io/file "/tmp/out")
+        (file-seq))
+
+   (io/delete-file "/tmp/src/jaq/browser.cljs")
+   (io/delete-file "/tmp/src/jaq/repl.cljs")
+
+   (build/build "/tmp/src"
+                {:optimizations :advanced
+                 :output-dir "/tmp/out"
+                 :output-to "/tmp/out/index.js"})
+
+   (defmethod defer-fn ::build [{:keys [src opts]
+                                 :or {opts {:optimizations :advanced
+                                            :output-dir "/tmp/out"
+                                            :output-to "/tmp/out/app.js"}}}]
+     (build/build src opts))
+
+   (defer {:fn ::build :src "/tmp/src"})
+
+   (-> (io/file "/tmp/out/app.js")
+       (.length))
 
    )
 

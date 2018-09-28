@@ -58,9 +58,12 @@
 
 (defn get-file [file-name]
   (let [bucket (storage/default-bucket)
-        path (-> file-name
-                 (URLEncoder/encode "UTF-8"))]
+        path file-name]
     (storage/get-file bucket path)))
+
+#_(
+   (get-file "src/jaq/browser.cljs")
+   )
 
 (defn repl-handler [{:keys [body params] :as request}]
   (let [{:keys [form device-id repl-type broadcast repl-token]} (keywordize-keys params)
@@ -113,5 +116,79 @@
 
    (slurp "https://alpeware-jaq-runtime.appspot.com/public/foo.txt")
 
+   (require 'cljs.compiler.api)
+   jdk.nashorn.api.scripting.NashornException
+   (require
+    '[cljs.env :as env]
+    '[cljs.analyzer :as ana]
+    '[cljs.compiler :as comp]
+    '[cljs.closure :as cljsc]
+    '[cljs.repl :as repl]
+    '[cljs.repl.rhino :as rhino]
+    '[cljs.repl.nashorn :as nashorn])
+
+   (def repl-env (nashorn/repl-env))
+   (def cenv (env/default-compiler-env))
+   (def aenv (assoc-in (ana/empty-env) [:ns :name] 'cljs.user))
+
+   (env/with-compiler-env cenv
+     (repl/eval-cljs repl-env aenv '(def foo 2)))
+
+   (-> @cenv :cljs.analyzer/namespaces)
+
+   ((set (keys repl/default-special-fns)) (first '(in-ns 'jaq.foo)))
+
+   (env/with-compiler-env cenv
+     (binding [ana/*cljs-ns* ana/*cljs-ns*]
+       (let [form '(in-ns 'jaq.foo)]
+         ((get repl/default-special-fns (first form)) repl-env aenv form {}))))
+
+   (type repl-env)
+
+   (binding [ana/*cljs-ns* 'cljs.user]
+     (env/with-compiler-env cenv
+       (comp/with-core-cljs {}
+         (fn []
+           (repl/source-fn aenv 'cljs.core/first)))))
+
+
+   (clojure.java.io/make-parents "/tmp/out/core.cljs")
+   (def opts {:output-dir "/tmp/out"
+              :optimizations :none
+              :cache-analysis true
+              :source-map true})
+
+   (env/with-compiler-env cenv
+     (repl/setup repl-env (merge (repl/-repl-options repl-env) (cljsc/add-implicit-options opts)
+                                 {:repl-requires '[[cljs.repl :refer-macros [source doc find-doc apropos dir pst]]
+                                                   [cljs.pprint :refer [pprint] :refer-macros [pp]]]
+                                  :eval repl/eval-cljs
+                                  :bind-err true})))
+
+   (env/with-compiler-env cenv
+     (repl/evaluate-form repl-env aenv "jaq repl" '(js/alert :foo)))
+
+   (env/with-compiler-env cenv
+
+     (repl/evaluate-form repl-env aenv "jaq repl" '(def js/alert (fn [e] e))))
+
+   (env/with-compiler-env cenv
+     (binding [ana/*cljs-ns* "jaq.foo"]
+       (repl/evaluate-form repl-env aenv "jaq repl" '(ns jaq.foo))))
+
+   (env/with-compiler-env cenv
+     (binding [ana/*cljs-ns* "jaq.foo"]
+       (repl/evaluate-form repl-env aenv "jaq repl" '(ns jaq.foo))))
+
+
+   (env/with-compiler-env cenv
+     (let [form '(js/alert :foo)
+           ast (ana/analyze repl-env form nil opts)]
+       (comp/emit-str ast)))
+
+   env/*compiler*
+
+   (->> (clojure.java.io/file "/tmp/out")
+        (file-seq))
 
    )
