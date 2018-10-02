@@ -189,33 +189,6 @@
 
 ;;;;
 
-(def session-entity :core/sessions)
-(def session-id 1)
-(def session-key (str session-entity "/" session-id))
-(defonce session-store (datastore/create-store session-entity))
-(def callbacks (atom {:noop (fn [_])}))
-;;(def repl-sessions (atom {}))
-;;(def repl-cljs-sessions (atom {}))
-
-(defn get-sessions [key]
-  (let [m (memcache/peek key)
-        sessions (get m key)]
-    (if sessions
-      sessions
-      (let [session-entity {:id session-id :v 1 :devices []}
-            sessions (try
-                       (datastore/fetch session-store session-id 1)
-                       (catch Exception e
-                         (datastore/store-all! session-store [session-entity])
-                         session-entity))]
-        (memcache/push {key sessions})
-        sessions))))
-
-(defn bootstrap []
-  (get-sessions session-key))
-
-;;;;
-
 (defmulti api-fn :fn)
 (defmethod api-fn :default [params]
   {:error "Unknown fn call"
@@ -232,38 +205,13 @@
     ;;(log/info (into [] out))
     {:fn :syncer :id id :messages out}))
 
-(defmethod deferred/defer-fn :open-session [{:keys [device-id]}]
-  (let [sessions (get-sessions session-key)
-        devices (:devices sessions)]
-    (when-not (contains? (set devices) device-id)
-      (memcache/push {session-key
-                      (datastore/update! session-store session-id update :devices conj device-id)}))))
-
-(defn close-session [device-id]
-  (deferred/defer {:fn :close-session :device-id device-id}))
-
-(defmethod deferred/defer-fn :close-session [{:keys [device-id]}]
-  (let [sessions (datastore/update! session-store session-id update :devices (partial remove #(= device-id %)))]
-    (memcache/push {session-key sessions})))
-
-(defmethod deferred/defer-fn :callback [{:keys [device-id callback-id result]}]
-  (let [_ (debug "callback" callback-id "result" result)
-        callback-fn (get @callbacks callback-id)]
-    (debug "callback" callback-id "result" result)
-    (when-not (= callback-id :noop)
-      (callback-fn {:result result :device-id device-id})
-      (swap! callbacks dissoc callback-id))))
-
 (defn api-handler [{:keys [body edn-params] :as request}]
   (let [;;p (clojure.edn/read-string body)
         _ (debug request)
         res (api-fn edn-params)]
     {:status 200 :body (pr-str res)}))
 
-#_(
-
-   (pr-str {:token 123})
-   )
+;;;
 
 (def routes
   (atom #{["/dev" :get [{:name ::remove

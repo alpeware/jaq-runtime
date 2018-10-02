@@ -5,6 +5,8 @@
    [clojure.core.async :refer [chan <! >! go go-loop close! alts!! timeout]]
    [hiccup.page :refer [html5 include-css include-js]]
    [ring.util.response :as response]
+   [jaq.ui.landing-page]
+   [jaq.services.datastore :as datastore]
    [jaq.services.deferred :as deferred]
    [jaq.services.storage :as storage]
    [jaq.services.util :as util]
@@ -17,6 +19,53 @@
 ;;; State
 (def repl-sessions (atom {}))
 (def repl-cljs-sessions (atom {}))
+
+(def session-entity :core/sessions)
+(def session-id 1)
+(def session-key (str session-entity "/" session-id))
+(defonce session-store (datastore/create-store session-entity))
+(def callbacks (atom {:noop (fn [_])}))
+
+(defn get-sessions [key]
+  (let [m (memcache/peek key)
+        sessions (get m key)]
+    (if sessions
+      sessions
+      (let [session-entity {:id session-id :v 1 :devices []}
+            sessions (try
+                       (datastore/fetch session-store session-id 1)
+                       (catch Exception e
+                         (datastore/store-all! session-store [session-entity])
+                         session-entity))]
+        (memcache/push {key sessions})
+        sessions))))
+
+(defn bootstrap []
+  (get-sessions session-key))
+
+;;;;
+
+(defmethod deferred/defer-fn :open-session [{:keys [device-id]}]
+  (let [sessions (get-sessions session-key)
+        devices (:devices sessions)]
+    (when-not (contains? (set devices) device-id)
+      (memcache/push {session-key
+                      (datastore/update! session-store session-id update :devices conj device-id)}))))
+
+(defn close-session [device-id]
+  (deferred/defer {:fn :close-session :device-id device-id}))
+
+(defmethod deferred/defer-fn :close-session [{:keys [device-id]}]
+  (let [sessions (datastore/update! session-store session-id update :devices (partial remove #(= device-id %)))]
+    (memcache/push {session-key sessions})))
+
+(defmethod deferred/defer-fn :callback [{:keys [device-id callback-id result]}]
+  (let [_ (debug "callback" callback-id "result" result)
+        callback-fn (get @callbacks callback-id)]
+    (debug "callback" callback-id "result" result)
+    (when-not (= callback-id :noop)
+      (callback-fn {:result result :device-id device-id})
+      (swap! callbacks dissoc callback-id))))
 
 ;;; CLJ REPL
 (defn new-clj-session []
@@ -80,7 +129,7 @@
                                     (>! out {:result result :device-id device-id})
                                     (close! out)))]))]
    (if (true? broadcast)
-     (let [devices (->> (jaq.runtime/get-sessions jaq.runtime/session-key) :devices)]
+     (let [devices (->> (get-sessions session-key) :devices)]
        (->> devices
             (map (fn [device-id]
                    (let [[ch callback-id callback-fn] (callback-fn-factory)]
@@ -89,7 +138,7 @@
                        (reset! original-callback {:callback-id callback-id
                                                   :chan ch})
                        (swap! channels conj {:out ch :device-id device-id}))
-                     (swap! jaq.runtime/callbacks assoc callback-id callback-fn)
+                     (swap! callbacks assoc callback-id callback-fn)
                      (deferred/add {:fn :eval :code form :callback-id callback-id
                                     :device-id device-id} device-id))))
             (doall))
@@ -101,7 +150,7 @@
        #_(swap! channels conj ch)
        (reset! original-callback {:callback-id callback-id
                                   :chan ch})
-       (swap! jaq.runtime/callbacks assoc callback-id callback-fn)
+       (swap! callbacks assoc callback-id callback-fn)
        (deferred/add {:fn :eval :code form :callback-id callback-id
                       :device-id device-id} device-id)))
 
