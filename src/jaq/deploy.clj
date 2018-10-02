@@ -361,7 +361,7 @@
    (slurp "https")
 
 
-
+   *ns*
    (let [config (parse-config (jaq.repl/get-file "jaq-config.edn"))
          config (merge config
                        {:server-ns "jaq.runtime"

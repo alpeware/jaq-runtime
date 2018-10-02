@@ -8,6 +8,7 @@
    [jaq.ui.landing-page]
    [jaq.services.datastore :as datastore]
    [jaq.services.deferred :as deferred]
+   [jaq.services.memcache :as memcache]
    [jaq.services.storage :as storage]
    [jaq.services.util :as util]
    [taoensso.timbre :as timbre
