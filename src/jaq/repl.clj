@@ -8,6 +8,7 @@
    [jaq.services.deferred :as deferred]
    [jaq.services.storage :as storage]
    [jaq.services.util :as util]
+   [jaq.ui :as ui]
    [taoensso.timbre :as timbre
     :refer [log  trace  debug  info  warn  error  fatal  report]])
   (:import
@@ -184,7 +185,7 @@
 
 (defn index-handler
   [request]
-  (landing-page (jaq.components.landing-page/landing-page)))
+  (landing-page (ui.landing-page/landing-page)))
 
 (defmethod deferred/defer-fn :eval [{:keys [device-id form repl-type broadcast] :as m}]
   (let [[session eval-fn] (if (= :clj repl-type)
