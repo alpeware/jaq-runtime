@@ -7,7 +7,7 @@
 
 (require 'clojure-mode)
 
-(setq *jaq-endpoint* "JAQ-ENDPOINT")
+(setq *jaq-endpoint* "https://PROJECT-ID.appspot.com/repl")
 (setq *jaq-device-id* "JAQ-DEVICE-ID")
 (setq *jaq-repl-token* "JAQ-REPL-TOKEN")
 (setq *jaq-repl-type* ":clj")
@@ -64,6 +64,18 @@
   (jaq-eval-region (save-excursion (backward-sexp) (point)) (point) and-go))
 
 (global-set-key (kbd "C-x C-j") 'jaq-eval-sexp)
+
+;;; eval buffer
+(defun jaq-eval-buffer (&optional and-go)
+  (interactive "P")
+  (let ((str (format
+              "(clojure.core/load-string %s)"
+              (prin1-to-string (buffer-substring-no-properties (point-min) (point-max))))))
+    (jaq-eval-repl *jaq-endpoint* *jaq-device-id* *jaq-repl-type*
+                   *jaq-broadcast* str)))
+
+(global-set-key (kbd "C-x C-h") 'jaq-eval-buffer)
+
 
 ;;; post buffer
 (defun jaq-post-buffer (file-name)

@@ -2,9 +2,11 @@
   (:require
    [jaq.repl :refer [repl-handler index-handler]]
    [jaq.deploy :as deploy]
-   [jaq.services.deferred :refer [defer defer-fn]]
+   [jaq.services.deferred :as deferred :refer [defer defer-fn]]
+   [jaq.services.datastore :as datastore]
    [jaq.services.storage :as storage]
    [jaq.services.management :as management]
+   [jaq.services.memcache :as memcache]
    [jaq.services.util :as util :refer [remote! repl-server credentials]]
    [io.pedestal.http :as http]
    [io.pedestal.http.route :as route]
@@ -123,6 +125,7 @@
    (management/enable "appengine.googleapis.com" "alpeware-jaq-runtime")
    (management/enable "cloudresourcemanager.googleapis.com" "alpeware-jaq-runtime")
    (management/enable "script.googleapis.com" "alpeware-jaq-runtime")
+   (management/enable "pubsub.googleapis.com" "alpeware-jaq-runtime")
 
    (storage/buckets "alpeware-jaq-runtime")
    (storage/list (storage/default-bucket))
@@ -184,9 +187,120 @@
 (defmulti listener-fn :fn)
 (defmethod listener-fn :default [_])
 
+;;;;
+
+(def session-entity :core/sessions)
+(def session-id 1)
+(def session-key (str session-entity "/" session-id))
+(defonce session-store (datastore/create-store session-entity))
+(def callbacks (atom {:noop (fn [_])}))
+;;(def repl-sessions (atom {}))
+;;(def repl-cljs-sessions (atom {}))
+
+(defn get-sessions [key]
+  (let [m (memcache/peek key)
+        sessions (get m key)]
+    (if sessions
+      sessions
+      (let [session-entity {:id session-id :v 1 :devices []}
+            sessions (try
+                       (datastore/fetch session-store session-id 1)
+                       (catch Exception e
+                         (datastore/store-all! session-store [session-entity])
+                         session-entity))]
+        (memcache/push {key sessions})
+        sessions))))
+
+(defn bootstrap []
+  (get-sessions session-key))
+
+;;;;
+
+(defmulti api-fn :fn)
+(defmethod api-fn :default [params]
+  {:error "Unknown fn call"
+   :params params})
+
+(defmethod api-fn :syncer [{:keys [id messages]}]
+  (let [_ (->> messages
+               (map deferred/defer)
+               (doall))
+        tasks (deferred/lease {:tag id})
+        out (deferred/process tasks)
+        _ (-> (deferred/delete tasks)
+              (doall))]
+    ;;(log/info (into [] out))
+    {:fn :syncer :id id :messages out}))
+
+(defmethod deferred/defer-fn :open-session [{:keys [device-id]}]
+  (let [sessions (get-sessions session-key)
+        devices (:devices sessions)]
+    (when-not (contains? (set devices) device-id)
+      (memcache/push {session-key
+                      (datastore/update! session-store session-id update :devices conj device-id)}))))
+
+(defn close-session [device-id]
+  (deferred/defer {:fn :close-session :device-id device-id}))
+
+(defmethod deferred/defer-fn :close-session [{:keys [device-id]}]
+  (let [sessions (datastore/update! session-store session-id update :devices (partial remove #(= device-id %)))]
+    (memcache/push {session-key sessions})))
+
+(defmethod deferred/defer-fn :callback [{:keys [device-id callback-id result]}]
+  (let [_ (debug "callback" callback-id "result" result)
+        callback-fn (get @callbacks callback-id)]
+    (debug "callback" callback-id "result" result)
+    (when-not (= callback-id :noop)
+      (callback-fn {:result result :device-id device-id})
+      (swap! callbacks dissoc callback-id))))
+
+(defn api-handler [{:keys [body edn-params] :as request}]
+  (let [;;p (clojure.edn/read-string body)
+        _ (debug request)
+        res (api-fn edn-params)]
+    {:status 200 :body (pr-str res)}))
+
+#_(
+
+   (pr-str {:token 123})
+   )
+
 (def routes
-  (atom #{["/" :get [`index-handler]]
-          ["/repl" :post [(body-params/body-params) `repl-handler]]}))
+  (atom #{["/dev" :get [{:name ::remove
+                         :leave (fn [{response :response :as context}]
+                                  (let [c (->> context
+                                               :response
+                                               :headers
+                                               #_((fn [e] (merge e {:content-security-policy "script-src 'unsafe-eval' 'unsafe-inline'" })))
+                                               ((fn [e] (merge e {"content-security-policy" "" })))
+                                               (assoc-in context [:response :headers]))]
+                                    (debug ::remove context response c)
+                                    c)
+                                  )}
+                        `index-handler]]
+          ["/repl" :post [(body-params/body-params) `repl-handler]]
+          ["/api" :post [(body-params/body-params) `api-handler]]
+          ["/out/*" :get [{:name ::remove
+                           :leave (fn [{response :response :as context}]
+                                    (let [c (->> context
+                                                 :response
+                                                 :headers
+                                                 ((fn [e] (merge e {"content-security-policy" ""
+                                                                    "content-type" "text/javascript"})))
+                                                 (assoc-in context [:response :headers]))]
+                                      (debug ::remove c)
+                                      c))}
+                          (io.pedestal.http.ring-middlewares/file "/tmp/")]]}))
+
+#_(
+
+   *ns*
+
+   (io.pedestal.interceptor/interceptor? (io.pedestal.interceptor/interceptor remove-secure-headers))
+
+   (-> (io.pedestal.interceptor/interceptor remove-secure-headers)
+       :name)
+   )
 
 (def service {:env :prod
               ;; You can bring your own non-default interceptors. Make
@@ -206,7 +320,13 @@
 
               ;; Root for resource interceptor that is available by default.
               ;;::http/resource-path "/public"
+              ::file-path "/tmp/"
               })
+
+#_(
+   (clojure.java.io/make-parents "/tmp/out/foo.txt")
+   (spit "/tmp/out/foo.txt" "foo bar")
+   )
 
 (defonce servlet (atom nil))
 
@@ -228,3 +348,22 @@
   (listener-fn {:fn :destroy})
   (http/servlet-destroy @servlet)
   (reset! servlet nil))
+
+#_(
+
+   *ns*
+   (in-ns 'jaq.runtime)
+
+   (->> @servlet
+        keys)
+
+   (let [servlet-fn (:io.pedestal.http/servlet @servlet)
+         service-fn (:io.pedestal.http/service-fn @servlet)]
+     (-> (http/servlet-init service nil)
+         #_(assoc :io.pedestal.http/servlet servlet-fn)
+         #_(assoc :io.pedestal.http/service-fn service-fn)
+         ((fn [e] (reset! servlet e)))))
+
+
+
+   )

@@ -2,17 +2,21 @@
   (:require
    [clojure.main :as main]
    [clojure.walk :refer [keywordize-keys]]
+   [clojure.core.async :refer [chan <! >! go go-loop close! alts!! timeout]]
    [hiccup.page :refer [html5 include-css include-js]]
    [ring.util.response :as response]
+   [jaq.services.deferred :as deferred]
    [jaq.services.storage :as storage]
    [jaq.services.util :as util]
    [taoensso.timbre :as timbre
     :refer [log  trace  debug  info  warn  error  fatal  report]])
   (:import
-   [java.net URLEncoder]))
+   [java.net URLEncoder]
+   [java.util UUID]))
 
 ;;; State
 (def repl-sessions (atom {}))
+(def repl-cljs-sessions (atom {}))
 
 ;;; CLJ REPL
 (defn new-clj-session []
@@ -49,6 +53,75 @@
           (finally (swap! session assoc :bindings (get-thread-bindings))))))
     @result))
 
+;; cljs
+(defn new-cljs-session [device-id]
+  (debug "new cljs session" device-id)
+  (let [session (atom {:bindings (get-thread-bindings)
+                       :device-id device-id})]
+    #_(cljs-env-setup session device-id)
+    session))
+
+(defn broadcast-eval-js [{:keys [device-id broadcast]} form]
+ (let [_ (debug "eval js" device-id form broadcast)
+       broadcast (boolean broadcast)
+       original-device-id device-id
+       original-callback (atom {})
+       repl-eval-timeout (* 1000 30) ;; 30s
+       repl-timeout (or repl-eval-timeout 18000)
+       ;;callback-id (str (UUID/randomUUID))
+       channels (atom [])
+       callback-fn-factory (fn []
+                             (let [out (chan 1)
+                                   uuid (str (UUID/randomUUID))]
+                               [out
+                                uuid
+                                (fn [{:keys [result device-id]}]
+                                  (go
+                                    (>! out {:result result :device-id device-id})
+                                    (close! out)))]))]
+   (if (true? broadcast)
+     (let [devices (->> (jaq.runtime/get-sessions jaq.runtime/session-key) :devices)]
+       (->> devices
+            (map (fn [device-id]
+                   (let [[ch callback-id callback-fn] (callback-fn-factory)]
+                     (debug "callback" callback-id device-id)
+                     (if (= device-id original-device-id)
+                       (reset! original-callback {:callback-id callback-id
+                                                  :chan ch})
+                       (swap! channels conj {:out ch :device-id device-id}))
+                     (swap! jaq.runtime/callbacks assoc callback-id callback-fn)
+                     (deferred/add {:fn :eval :code form :callback-id callback-id
+                                    :device-id device-id} device-id))))
+            (doall))
+       (let [{:keys [callback-id]} @original-callback]
+         #_(swap! broadcast-callbacks assoc callback-id channels)
+         #_(deferred/defer {:fn :broadcast-evaled :callback-id callback-id :repl-timeout repl-timeout}))
+       (debug "done sending calbacks"))
+     (let [[ch callback-id callback-fn] (callback-fn-factory)]
+       #_(swap! channels conj ch)
+       (reset! original-callback {:callback-id callback-id
+                                  :chan ch})
+       (swap! jaq.runtime/callbacks assoc callback-id callback-fn)
+       (deferred/add {:fn :eval :code form :callback-id callback-id
+                      :device-id device-id} device-id)))
+
+   #_(debug "waiting for" device-id "to eval" js)
+   (let [;;outs (async/merge @channels (count @channels))
+         out (:chan @original-callback)
+         other (-> @channels first :out)
+         ;;_ (debug "channel" (<!! other))
+         _ (debug "waiting for results" @original-callback)
+         [v ch] (alts!! [out (timeout repl-timeout)])]
+     (debug "result original" v)
+     (if (= ch out)
+       (:result v)
+       {:value "Eval timed out!" :ns "cljs.core"}))))
+
+(defn eval-cljs [session input]
+  {:pre [(instance? String input)
+         (instance? clojure.lang.Atom session)]}
+  (broadcast-eval-js @session input))
+
 ;;; Handler
 (defn save-file [file-name body]
   (let [bucket (storage/default-bucket)
@@ -61,10 +134,6 @@
         path file-name]
     (storage/get-file bucket path)))
 
-#_(
-   (get-file "src/jaq/browser.cljs")
-   )
-
 (defn repl-handler [{:keys [body params] :as request}]
   (let [{:keys [form device-id repl-type broadcast repl-token]} (keywordize-keys params)
         _ (debug request)
@@ -73,20 +142,23 @@
         _ (debug repl-type)
         repl-type (read-string repl-type)
         broadcast (read-string broadcast)
-        [session eval-fn] (when (= :clj repl-type)
+        [session eval-fn] (if (= :clj repl-type)
                             [(get @repl-sessions device-id (new-clj-session))
-                             eval-clj])
+                             eval-clj]
+                            [(or (get @repl-cljs-sessions device-id) (new-cljs-session device-id))
+                             eval-cljs])
+        _ (swap! session assoc-in [:broadcast] broadcast)
         evaled (if (= repl-token (:JAQ_REPL_TOKEN util/env))
                    (try
                      (eval-fn session form)
                     (catch Throwable t t))
                    {:value "Unauthorized!" :ns "clojure.core"})
         ;;result (str (:value evaled) "\n" (:ns evaled) "=> ")
-        result (str (:value evaled) "\n" (:ns evaled) "=> ")
-        ]
+        result (str (:value evaled) "\n" (:ns evaled) "=> ")]
 
-    (when (= :clj repl-type)
-      (swap! repl-sessions assoc device-id session))
+    (if (= :clj repl-type)
+      (swap! repl-sessions assoc device-id session)
+      (swap! repl-cljs-sessions assoc device-id session))
 
     (debug "edn" params evaled)
     {:status 200 :body result}))
@@ -96,18 +168,41 @@
    (response/response html)
    "text/html"))
 
-(defn landing-page []
+(defn landing-page [app]
   (as-html
    (html5
     [:head
+     [:meta {:name "viewport" :content "width=device-width, initial-scale=1"}]
+     (include-css "https://cdnjs.cloudflare.com/ajax/libs/bulma/0.7.1/css/bulma.min.css")
      [:title "JAQ Runtime"]]
     [:body
-     [:h1 "JAQ Runtime REPL"]
-     [:p "Introducing a Clojure Cloud REPL for the Google App Engine."]])))
+     app
+     [:script "var CLOSURE_DEFINES = {'goog.ENABLE_CHROME_APP_SAFE_SCRIPT_LOADING': true};"
+      "var STATE = '{:token 123}';"]
+     (include-js "/out/goog/base.js")
+     (include-js "/out/app.js")])))
 
 (defn index-handler
   [request]
-  (landing-page))
+  (landing-page (jaq.components.landing-page/landing-page)))
+
+(defmethod deferred/defer-fn :eval [{:keys [device-id form repl-type broadcast] :as m}]
+  (let [[session eval-fn] (if (= :clj repl-type)
+                            [(get @repl-sessions device-id (jaq.repl/new-clj-session))
+                             jaq.repl/eval-clj]
+                            [(or (get @repl-cljs-sessions device-id) (jaq.repl/new-cljs-session device-id))
+                             jaq.repl/eval-cljs])
+        _ (swap! session assoc-in [:broadcast] broadcast)
+        result (try
+                 (eval-fn session form)
+                 (catch Throwable t t))]
+    (debug "eval" device-id form result)
+    ;; want to return as a string otherwise cljs edn reader might get confused ex. bidi routes
+    (deferred/add {:fn :evaled :result (pr-str result) :device-id device-id} device-id)
+    #_(debug "repl-type" repl-type)
+    (if (= :clj repl-type)
+      (swap! jaq.repl/repl-sessions assoc device-id session)
+      (swap! jaq.repl/repl-cljs-sessions assoc device-id session))))
 
 #_(
 

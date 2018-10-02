@@ -20,7 +20,7 @@
    [java.io File]))
 
 #_(
-
+   *ns*
    (in-ns 'jaq.deploy)
    (io/resource "jaq-repl.el")
 
@@ -229,8 +229,9 @@
 (defmethod defer-fn ::deps [{:keys [service config cont] :as params}]
   (debug ::deps config)
   (clear-war config)
-  (prepare-src config service)
+  #_(prepare-src config service)
   (exploded-war config service)
+  (prepare-src config service)
   #_(clear-cache config)
   (when-not (empty? cont)
     (defer (merge params
@@ -301,15 +302,65 @@
       (defer (merge params {:fn ::deps :service service :services services
                             :cont [::upload ::deploy ::migrate ::deploy-all]})))))
 
-(defmethod defer-fn ::build [{:keys [src opts]
-                              :or {opts {:optimizations :advanced
-                                         :output-dir "/tmp/out"
-                                         :output-to "/tmp/out/app.js"}}}]
-  (build/build src opts))
+(defmethod defer-fn ::build [{:keys [src opts]}]
+  (let [compiler-opts (merge {:optimizations :advanced
+                              :verbose true
+                              :asset-path "out"
+                              :output-dir "/tmp/out"
+                              :output-to "/tmp/out/app.js"}
+                             opts)]
+    (build/build src compiler-opts)))
 
 #_(
    *ns*
    (in-ns 'jaq.deploy)
+
+
+   (storage/get-files (storage/default-bucket) "src" "/tmp")
+   (->> (clojure.java.io/file "/tmp/out")
+        (file-seq)
+        (map (fn [e] (.getPath e)))
+        (filter (fn [e] (clojure.string/ends-with? e ".js")))
+        #_(count))
+
+   (io/delete-file "/tmp/src/jaq/browser.cljs")
+   (io/delete-file "/tmp/src/jaq/app.cljs")
+   (io/delete-file "/tmp/src/jaq/repl.cljs")
+
+   (build/build "/tmp/src"
+                {:optimizations :advanced
+                 :output-dir "/tmp/out"
+                 :output-to "/tmp/out/index.js"})
+
+   (defmethod defer-fn ::build [{:keys [src opts]}]
+     (let [compiler-opts (merge {:optimizations :advanced
+                        :output-dir "/tmp/out"
+                        :output-to "/tmp/out/app.js"}
+                       opts)])
+     (build/build src compiler-opts))
+
+   ;; requires src files on classpath
+   (defer {:fn ::build :src "/tmp/src" :opts {:main "jaq.app"}})
+
+   (defer {:fn ::build :src "/tmp/src" :opts {:optimizations :none
+                                              :main 'jaq.app
+                                              }})
+
+   (slurp "/tmp/out/jaq/browser.cljs")
+
+   (defer {:fn ::build :src "/tmp/src" :opts {:optimizations :advanced
+                                              :main 'jaq.app}})
+
+   (defer {:fn ::build :src "/tmp/src" :opts {:optimizations :none
+                                              :main 'jaq.repl}})
+
+   (slurp "/tmp/out/app.js")
+   (-> (io/file "/tmp/out/app.js")
+       (.length))
+
+   (slurp "https")
+
+
 
    (let [config (parse-config (jaq.repl/get-file "jaq-config.edn"))
          config (merge config
@@ -324,6 +375,12 @@
                         :target-path "/tmp/war"})]
      (deploy-all config)
      #_(defer {:fn ::deploy-all :config config}))
+
+   (let [config (parse-config (jaq.repl/get-file "jaq-config.edn"))
+         config (merge config
+                       {:server-ns "jaq.runtime"
+                        :target-path "/tmp/war"})]
+     (defer {:fn ::deploy-all :config config :services [:service]}))
 
    (util)
    (slurp "https://v28-dot-alpeware-jaq-runtime.appspot.com/public/baz.txt")
@@ -533,9 +590,10 @@
 
 
    (add-system-classpath "file:/tmp/pomegranate1.jar")
-   (add-system-classpath "file:/tmp/")
+   (add-system-classpath "file:/tmp/src")
    (spit "/tmp/foo.txt" "foo bar")
 
+   (io/resource "/jaq/app.cljs")
    (spit "/tmp/foo.clj" "(ns foo) (defn bar [] :bar)")
 
    (require 'foo)
@@ -611,6 +669,9 @@
    (io/copy
     (.getFile (io/as-url "http://central.maven.org/maven2/com/cemerick/pomegranate/1.0.0/pomegranate-1.0.0.jar"))
     (io/file "/tmp/pomegranate.jar"))
+
+   (io/copy (io/file "/tmp/src/jaq/browser.cljs")
+            (io/file "/tmp/out/jaq/browser.cljs"))
 
    (->> (io/file "/tmp")
         (file-seq)
