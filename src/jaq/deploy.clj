@@ -121,7 +121,7 @@
                   :mvn/repos mvn/standard-repos
                   :mvn/local-repo (:mvn/local-repo opts default-cache)
                   :deps (:deps opts)}
-        args-map (get-in opts [:aliases service])]
+        args-map (get-in opts [:services service])]
     (with-redefs [clojure.tools.gitlibs.impl/cache-dir (fn []
                                                          (:git/local-repo opts default-cache))]
       (let [lib-map (deps/resolve-deps deps-map args-map)
@@ -305,27 +305,43 @@
 (defmethod defer-fn ::build [{:keys [src opts]}]
   (let [compiler-opts (merge {:optimizations :advanced
                               :verbose true
+                              :compiler-stats true
+                              :cache-analysis true
                               :asset-path "out"
                               :output-dir "/tmp/out"
                               :output-to "/tmp/out/app.js"}
                              opts)]
     (build/build src compiler-opts)))
 
+(defn add-system-classpath
+  "Add an url path to the system class loader"
+  [url]
+  (let [^java.net.URLClassLoader cl (-> (ClassLoader/getSystemClassLoader))
+        clazz (.getClass cl)
+        method (-> clazz
+                   (.getSuperclass)
+                   (.getDeclaredMethod "addURL" (into-array Class [java.net.URL])))
+        u (if (string? url) (java.net.URL. url) url)]
+    (.setAccessible method true)
+    (. method (invoke cl (into-array Object [u])))))
+
 #_(
    *ns*
    (in-ns 'jaq.deploy)
 
-
    (storage/get-files (storage/default-bucket) "src" "/tmp")
-   (->> (clojure.java.io/file "/tmp/out")
+   (->> (clojure.java.io/file "/tmp/src")
         (file-seq)
         (map (fn [e] (.getPath e)))
-        (filter (fn [e] (clojure.string/ends-with? e ".js")))
+        #_(filter (fn [e] (clojure.string/ends-with? e ".clj")))
+        #_(filter (fn [e] (clojure.string/includes? e "macro")))
         #_(count))
 
    (io/delete-file "/tmp/src/jaq/browser.cljs")
    (io/delete-file "/tmp/src/jaq/app.cljs")
    (io/delete-file "/tmp/src/jaq/repl.cljs")
+
+   (add-system-classpath "file:/tmp/src/")
 
    (build/build "/tmp/src"
                 {:optimizations :advanced
@@ -340,19 +356,33 @@
      (build/build src compiler-opts))
 
    ;; requires src files on classpath
-   (defer {:fn ::build :src "/tmp/src" :opts {:main "jaq.app"}})
+   (storage/get-files (storage/default-bucket) "src" "/tmp")
 
    (defer {:fn ::build :src "/tmp/src" :opts {:optimizations :none
-                                              :main 'jaq.app
-                                              }})
-
-   (slurp "/tmp/out/jaq/browser.cljs")
+                                              :main 'jaq.app}})
 
    (defer {:fn ::build :src "/tmp/src" :opts {:optimizations :advanced
                                               :main 'jaq.app}})
 
-   (defer {:fn ::build :src "/tmp/src" :opts {:optimizations :none
-                                              :main 'jaq.repl}})
+   (-> (slurp "/tmp/src/jaq/app.cljs")
+       (clojure.edn/read-string)
+       (clojure.pprint/pprint)
+       (clojure.pprint/code-dispatch)
+       (with-out-str))
+
+   (-> {:foo :bar}
+       (clojure.pprint/pprint)
+       (with-out-str))
+
+
+   (->> (io/file "/tmp/out/app.js")
+        (.length))
+
+   (defer {:fn ::build :src "/tmp/src" :opts {:optimizations :simple
+                                              :main 'jaq.app}})
+
+   (io/copy (io/file "/tmp/out/app.js")
+         (io/file "/tmp/.cache/resources/public/app.js"))
 
    (slurp "/tmp/out/app.js")
    (-> (io/file "/tmp/out/app.js")
@@ -366,8 +396,10 @@
          config (merge config
                        {:server-ns "jaq.runtime"
                         :target-path "/tmp/war"})]
+     (defer {:fn ::upload :config config :service :service})
+     #_(defer {:fn ::deps :config config :service :service})
      #_(defer {:fn ::deploy :config config :service :service :cont [::migrate]})
-     (defer {:fn ::deploy :config config :service :default :cont [::migrate]}))
+     #_(defer {:fn ::deploy :config config :service :default :cont [::migrate]}))
 
    (let [config (parse-config (jaq.repl/get-file "jaq-config.edn"))
          config (merge config
@@ -590,10 +622,10 @@
 
 
    (add-system-classpath "file:/tmp/pomegranate1.jar")
-   (add-system-classpath "file:/tmp/src")
+   (add-system-classpath "file:/tmp/src/")
    (spit "/tmp/foo.txt" "foo bar")
 
-   (io/resource "/jaq/app.cljs")
+   (io/resource "jaq/app.cljs")
    (spit "/tmp/foo.clj" "(ns foo) (defn bar [] :bar)")
 
    (require 'foo)

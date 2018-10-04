@@ -1,4 +1,5 @@
 (ns jaq.repl
+  (:refer-clojure :exclude [read-string])
   (:require
    [clojure.main :as main]
    [clojure.walk :refer [keywordize-keys]]
@@ -83,6 +84,12 @@
          (when-not (instance? clojure.lang.Compiler$CompilerException ex)
            (str " " (if el (main/stack-element-str el) "[trace missing]"))))))
 
+(def *reader-opts* {:read-cond :allow})
+
+;;; TODO(alpeware): support for reader conditionals
+(defn load-string [s]
+  (clojure.core/load-string s))
+
 (defn eval-clj [session input]
   {:pre [(instance? String input)
          (instance? clojure.lang.Atom session)]}
@@ -91,7 +98,7 @@
     (main/with-bindings
       (with-bindings bindings
         (try
-          (let [form (read-string input)
+          (let [form (read-string *reader-opts* input)
                 value (eval form)]
             (set! *3 *2)
             (set! *2 *1)
@@ -226,12 +233,17 @@
      (include-css "https://cdnjs.cloudflare.com/ajax/libs/bulma/0.7.1/css/bulma.min.css")
      [:title "JAQ Runtime"]]
     [:body
-     app
+     [:div#app app]
      [:script "var CLOSURE_DEFINES = {'goog.ENABLE_CHROME_APP_SAFE_SCRIPT_LOADING': true};"
       "var STATE = '{:token 123}';"]
      (include-js "/out/goog/base.js")
-     (include-js "/out/app.js")])))
+     (include-js "/out/app.js")
+     (include-js "/public/app.js")])))
 
+#_(
+   (in-ns 'jaq.repl)
+
+   )
 (defn index-handler
   [request]
   (landing-page (jaq.ui.landing-page/landing-page)))

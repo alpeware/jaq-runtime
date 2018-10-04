@@ -69,7 +69,7 @@
 (defun jaq-eval-buffer (&optional and-go)
   (interactive "P")
   (let ((str (format
-              "(clojure.core/load-string %s)"
+              "(jaq.repl/load-string %s)"
               (prin1-to-string (buffer-substring-no-properties (point-min) (point-max))))))
     (jaq-eval-repl *jaq-endpoint* *jaq-device-id* *jaq-repl-type*
                    *jaq-broadcast* str)))
