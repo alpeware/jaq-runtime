@@ -6,11 +6,6 @@
     [:div
      [:input.button.is-primary opts]]))
 
-#_(
-
-   (merge {} #?@(:clj {} :cljs (merge opts {:on-click (fn [e] (js/alert "not yet implemented"))})))
-   )
-
 (defn landing-page []
   [:div.main
    [:section.section
@@ -23,6 +18,10 @@
      (clone-repl)]]])
 
 #_(
+
+   *ns*
+   (slurp "/tmp/war/WEB-INF/classes/jaq/ui/landing_page.cljc")
+
    (jaq.app/render!)
 
    (-> js/document

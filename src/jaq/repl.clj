@@ -1,5 +1,5 @@
 (ns jaq.repl
-  (:refer-clojure :exclude [read-string])
+  (:refer-clojure :exclude [load-string])
   (:require
    [clojure.main :as main]
    [clojure.walk :refer [keywordize-keys]]
@@ -89,6 +89,11 @@
 ;;; TODO(alpeware): support for reader conditionals
 (defn load-string [s]
   (clojure.core/load-string s))
+
+#_(
+   *ns*
+   (in-ns 'jaq.repl)
+   )
 
 (defn eval-clj [session input]
   {:pre [(instance? String input)
