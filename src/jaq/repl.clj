@@ -84,7 +84,7 @@
          (when-not (instance? clojure.lang.Compiler$CompilerException ex)
            (str " " (if el (main/stack-element-str el) "[trace missing]"))))))
 
-(def *reader-opts* {:read-cond :allow})
+(def ^:dynamic *reader-opts* {:read-cond :allow})
 
 ;;; TODO(alpeware): support for reader conditionals
 (defn load-string [s]
