@@ -7,7 +7,7 @@
    [jaq.services.storage :as storage]
    [jaq.services.management :as management]
    [jaq.services.memcache :as memcache]
-   [jaq.services.util :as util :refer [remote! repl-server credentials]]
+   [jaq.services.util :as util]
    [io.pedestal.http :as http]
    [io.pedestal.http.route :as route]
    [io.pedestal.http.body-params :as body-params]
