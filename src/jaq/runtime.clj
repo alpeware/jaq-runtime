@@ -205,9 +205,16 @@
     ;;(log/info (into [] out))
     {:fn :syncer :id id :messages out}))
 
+#_(
+   *ns*
+   (in-ns 'jaq.runtime)
+   (api-fn {:fn :syncer :id :foo :messages nil})
+   (deferred/process (deferred/lease {:tag "739ce4ea-9cf0-4b38-b6f8-eba54c440187"}))
+   )
+
 (defn api-handler [{:keys [body edn-params] :as request}]
   (let [;;p (clojure.edn/read-string body)
-        _ (debug request)
+        _ (debug edn-params)
         res (api-fn edn-params)]
     {:status 200 :body (pr-str res)}))
 
@@ -222,7 +229,7 @@
                                                #_((fn [e] (merge e {:content-security-policy "script-src 'unsafe-eval' 'unsafe-inline'" })))
                                                ((fn [e] (merge e {"content-security-policy" "" })))
                                                (assoc-in context [:response :headers]))]
-                                    (debug ::remove context response c)
+                                    #_(debug ::remove context response c)
                                     c)
                                   )}
                         `index-handler]]
@@ -236,7 +243,7 @@
                                                  ((fn [e] (merge e {"content-security-policy" ""
                                                                     "content-type" "text/javascript"})))
                                                  (assoc-in context [:response :headers]))]
-                                      (debug ::remove c)
+                                      #_(debug ::remove c)
                                       c))}
                           (io.pedestal.http.ring-middlewares/file "/tmp/")]]}))
 
@@ -274,6 +281,20 @@
 #_(
    (clojure.java.io/make-parents "/tmp/out/foo.txt")
    (spit "/tmp/out/foo.txt" "foo bar")
+   )
+
+#_(
+   *ns*
+   (require 'jaq.runtime)
+   (in-ns 'jaq.runtime)
+   (def s
+     (-> service
+         (merge {::http/host "0.0.0.0"
+                 ::http/port 80
+                 ::http/join? false
+                 ::http/type :jetty})
+         (http/create-server)
+         (http/start)))
    )
 
 (defonce servlet (atom nil))

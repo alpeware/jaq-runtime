@@ -22,6 +22,7 @@
         com.taoensso/timbre  {:mvn/version "4.10.0"}
 
         com.google.appengine/appengine-api-1.0-sdk  {:mvn/version "1.9.65"}
-        com.google.appengine/appengine-api-labs  {:mvn/version "1.9.65"}
-        com.google.appengine/appengine-remote-api  {:mvn/version "1.9.65"}
-        com.google.appengine/appengine-tools-sdk  {:mvn/version "1.9.65"}}}
+        ;;com.google.appengine/appengine-api-labs  {:mvn/version "1.9.65"}
+        ;;com.google.appengine/appengine-remote-api  {:mvn/version "1.9.65"}
+        ;;com.google.appengine/appengine-tools-sdk  {:mvn/version "1.9.65"}
+        }}

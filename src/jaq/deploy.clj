@@ -233,7 +233,7 @@
   #_(prepare-src config service)
   (exploded-war config service)
   (prepare-src config service)
-  (clear-cache config)
+  #_(clear-cache config)
   (when-not (empty? cont)
     (defer (merge params
                   {:fn (first cont)
@@ -373,6 +373,7 @@
 
 #_(
    *ns*
+   (in-ns 'jaq.deploy)
 
    (let [config (parse-config (jaq.repl/get-file "jaq-config.edn"))
          config (merge config
@@ -412,8 +413,12 @@
          (count)))
 
    )
+#_(
+
+   )
 
 #_(
+
    *ns*
    (in-ns 'jaq.deploy)
 
@@ -453,7 +458,10 @@
    (compile-cljs  {:opts {:main 'jaq.app}})
 
    (defer {:fn ::build :src "/tmp/src" :opts {:optimizations :none
+                                              :asset-path "out"
                                               :main 'jaq.app}})
+
+   (copy-dir "/tmp/out" )
 
    (defer {:fn ::build :src "/tmp/src" :opts {:optimizations :advanced
                                               :main 'jaq.app}})
@@ -502,11 +510,14 @@
 
 
    *ns*
+   (in-ns 'jaq.deploy)
    (let [config (parse-config (jaq.repl/get-file "jaq-config.edn"))
          config (merge config
                        {:target-path "/tmp/war"})]
      #_(defer {:fn ::upload :config config :service :service})
-     #_(defer {:fn ::deps :config config :service :service :cont [::upload ::deploy ::migrate]})
+     #_(defer {:fn ::deps :config config :service :default :cont [::upload ::deploy ::migrate]})
+
+     #_(defer {:fn ::deps :config config :service :service})
 
      (defer {:fn ::upload :config config :service :service :cont [::deploy ::migrate]})
 

@@ -28,7 +28,22 @@
 (defonce session-store (datastore/create-store session-entity))
 (def callbacks (atom {:noop (fn [_])}))
 
+;;;
+(def all-sessions (atom {:id session-id :v 1 :devices []}))
+
 (defn get-sessions [key]
+  @all-sessions)
+
+(defmethod deferred/defer-fn :open-session [{:keys [device-id]}]
+  (let [sessions (get-sessions session-key)
+        devices (:devices sessions)]
+    (when-not (contains? (set devices) device-id)
+      (swap! all-sessions update :devices conj device-id))))
+
+(defmethod deferred/defer-fn :close-session [{:keys [device-id]}]
+  (swap! all-sessions update :devices (partial remove #(= device-id %))))
+
+#_(defn get-sessions [key]
   (let [m (memcache/peek key)
         sessions (get m key)]
     (if sessions
@@ -42,12 +57,25 @@
         (memcache/push {key sessions})
         sessions))))
 
-(defn bootstrap []
+#_(
+   (in-ns 'jaq.repl)
+   (def all-sessions (atom {:id session-id :v 1 :devices []}))
+
+   (defn get-sessions [key]
+     @all-sessions)
+
+   (defmethod deferred/defer-fn :open-session [{:keys [device-id]}]
+     (let [sessions (get-sessions session-key)
+           devices (:devices sessions)]
+       (when-not (contains? (set devices) device-id)
+         (swap! all-sessions update :devices conj device-id))))
+
+   )
+
+#_(defn bootstrap []
   (get-sessions session-key))
 
-;;;;
-
-(defmethod deferred/defer-fn :open-session [{:keys [device-id]}]
+#_(defmethod deferred/defer-fn :open-session [{:keys [device-id]}]
   (let [sessions (get-sessions session-key)
         devices (:devices sessions)]
     (when-not (contains? (set devices) device-id)
@@ -57,9 +85,11 @@
 (defn close-session [device-id]
   (deferred/defer {:fn :close-session :device-id device-id}))
 
-(defmethod deferred/defer-fn :close-session [{:keys [device-id]}]
+#_(defmethod deferred/defer-fn :close-session [{:keys [device-id]}]
   (let [sessions (datastore/update! session-store session-id update :devices (partial remove #(= device-id %)))]
     (memcache/push {session-key sessions})))
+
+;;;;
 
 (defmethod deferred/defer-fn :callback [{:keys [device-id callback-id result]}]
   (let [_ (debug "callback" callback-id "result" result)
@@ -246,7 +276,12 @@
      (include-js "/public/app.js")])))
 
 #_(
+   *ns*
    (in-ns 'jaq.repl)
+
+   (get-file "src/jaq/browser.cljs")
+
+   (storage/get-file (storage/default-bucket) "src/jaq/browser.cljs")
 
    )
 (defn index-handler
