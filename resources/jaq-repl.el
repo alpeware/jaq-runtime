@@ -85,7 +85,7 @@
               "(jaq.repl/save-file %s %s)"
               (prin1-to-string file-name)
               (prin1-to-string (buffer-substring-no-properties (point-min) (point-max))))))
-    (jaq-eval-repl *jaq-endpoint* *jaq-device-id* *jaq-repl-type*
+    (jaq-eval-repl *jaq-endpoint* *jaq-device-id* ":clj"
                    *jaq-broadcast* str)))
 
 (global-set-key (kbd "C-x C-k") 'jaq-post-buffer)
@@ -120,7 +120,7 @@
 
 (defun jaq-get-buffer (file-name)
   (interactive "sFile name: ")
-  (jaq-get-file *jaq-endpoint* *jaq-device-id* *jaq-repl-type*
+  (jaq-get-file *jaq-endpoint* *jaq-device-id* ":clj"
                 *jaq-broadcast* file-name))
 
 (global-set-key (kbd "C-x C-l") 'jaq-get-buffer)

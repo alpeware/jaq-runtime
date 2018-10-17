@@ -127,6 +127,8 @@
    (management/enable "script.googleapis.com" "alpeware-jaq-runtime")
    (management/enable "pubsub.googleapis.com" "alpeware-jaq-runtime")
 
+   (management/enable "memcache.googleapis.com" "alpeware-jaq-runtime")
+
    (storage/buckets "alpeware-jaq-runtime")
    (storage/list (storage/default-bucket))
    (storage/list "staging.alpeware-jaq-runtime.appspot.com")
@@ -241,6 +243,7 @@
                                                  :response
                                                  :headers
                                                  ((fn [e] (merge e {"content-security-policy" ""
+                                                                    "cache-control" "no-cache"
                                                                     "content-type" "text/javascript"})))
                                                  (assoc-in context [:response :headers]))]
                                       #_(debug ::remove c)
@@ -295,6 +298,7 @@
                  ::http/type :jetty})
          (http/create-server)
          (http/start)))
+   ((::http/stop-fn s))
    )
 
 (defonce servlet (atom nil))

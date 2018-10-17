@@ -7,6 +7,7 @@
    [clojure.java.io :as io]
    [clojure.java.classpath :as cp]
    [clojure.data.xml :as xml]
+   [clojure.data.json :as json]
    [cljs.build.api :as build]
    [jaq.services.appengine-admin :as admin]
    [jaq.services.deferred :refer [defer defer-fn]]
@@ -74,6 +75,40 @@
   (let [web-xml-path [war-path "WEB-INF" "web.xml"]]
     (apply io/make-parents web-xml-path)
     (spit (string/join File/separator web-xml-path) (war/make-web-xml opts))))
+
+(defn make-package-json [{:keys [app-name script-name engines scripts deps]
+                          :or {app-name "jaq-server"
+                               engines {:node ">=8"}
+                               scripts {:start "node server.js"}
+                               deps {}}}]
+  (json/write-str {:name app-name
+                   :engines engines
+                   :scripts scripts
+                   :dependencies deps}))
+
+(defn write-package-json [config target-path]
+  (let [path [target-path "package.json"]
+        opts (:opts config)]
+    (apply io/make-parents path)
+    (spit (string/join File/separator path) (make-package-json opts))))
+
+(defn write-nodejs [config target-path]
+  (let [script-name "server.js"
+        script-path "/tmp/out/server.js"]
+    (write-package-json config target-path)
+    (io/copy (io/file script-path)
+             (io/file (string/join File/separator [target-path script-name])))))
+
+#_(
+
+   (make-package-json {})
+   (write-package-json {} "/tmp/nodejs")
+   (slurp "/tmp/nodejs/package.json")
+
+   (write-nodejs {} "/tmp/nodejs")
+   (-> (io/file "/tmp/nodejs")
+       (file-seq))
+   )
 
 (defn write-appengine-web-xml [opts war-path]
   (let [xml-path [war-path "WEB-INF" "appengine-web.xml"]]
@@ -187,15 +222,29 @@
         prefix (get-in opts [:code-prefix])
         remotes (->> (storage/objects bucket {:prefix prefix})
                      (map :name)
-                     (map (fn [e] (-> e (clojure.string/split #"/") (last))))
+                     (map (fn [e] (-> e (clojure.string/replace (re-pattern prefix) "") #_(last))))
                      (set))
         target-path (:target-path opts)]
     (->> (io/file target-path)
          (file-seq)
          (filter (fn [e] (.isFile e)))
-         (filter (fn [e] (->> (.getName e) (contains? remotes) (not))))
+         (filter (fn [e] (->> (clojure.string/replace (.getPath e) (re-pattern target-path) "") (contains? remotes) (not))))
          #_(map (fn [e]
-                  (storage/put-large "staging.alpeware-jaq-runtime.appspot.com" (.getPath e) "/tmp/war" "apps/v19" {:callback storage/file-upload-done}))))))
+                  (storage/put-large "staging.alpeware-jaq-runtime.appspot.com" (.getPath e) "/tmp/war" "apps/v19" {:callback storage/file-upload-done}))))
+    #_remotes))
+
+#_(
+
+   (let [config (parse-config (jaq.repl/get-file "jaq-config.edn"))
+         config (merge config
+                       {:target-path "/tmp/nodejs"
+                        :defaults {:runtime "nodejs8"}})]
+
+     (->> (remaining-files config)
+          #_(take 4)
+          count))
+
+   )
 
 #_(defn upload-cb [{:keys [callback-args]}]
     (debug "upload-cb" callback-args)
@@ -413,9 +462,6 @@
          (count)))
 
    )
-#_(
-
-   )
 
 #_(
 
@@ -435,6 +481,7 @@
    (io/delete-file "/tmp/src/jaq/browser.cljs")
    (io/delete-file "/tmp/src/jaq/app.cljs")
    (io/delete-file "/tmp/src/jaq/repl.cljs")
+   (io/delete-file "/tmp/src/jaq/server.cljs")
 
    (add-system-classpath "file:/tmp/src/")
    (contains-class-path? "/tmp/.cache/src")
@@ -460,6 +507,37 @@
    (defer {:fn ::build :src "/tmp/src" :opts {:optimizations :none
                                               :asset-path "out"
                                               :main 'jaq.app}})
+
+   @*1
+
+   *ns*
+   (storage/get-files (storage/default-bucket) "src" "/tmp")
+   (defer {:fn ::build :src "/tmp/src" :opts {:optimizations :none
+                                              :output-to "/tmp/out/server.js"
+                                              :target :nodejs
+                                              :asset-path ""
+                                              :language-in :ecmascript5
+                                              :main 'jaq.server}})
+
+   (defer {:fn ::build :src "/tmp/src" :opts {:optimizations :simple
+                                              :output-to "/tmp/nodejs/server.js"
+                                              :target :nodejs
+                                              :asset-path "."
+                                              :language-in :ecmascript5
+                                              :main 'jaq.server}})
+
+
+   (write-nodejs {:opts {:deps {"concat-stream" "1.6.2"
+                                "content-type" "1.0.4"
+                                "cookies" "0.7.1"
+                                "etag" "1.8.1"
+                                "lru" "3.1.0"
+                                "multiparty" "4.1.3"
+                                "random-bytes" "1.0.0"
+                                "qs" "6.5.1"
+                                "simple-encryptor" "1.2.0"
+                                "url" "0.11.0"
+                                "ws" "5.1.1"}}} "/tmp/nodejs")
 
    (copy-dir "/tmp/out" )
 
@@ -513,13 +591,19 @@
    (in-ns 'jaq.deploy)
    (let [config (parse-config (jaq.repl/get-file "jaq-config.edn"))
          config (merge config
-                       {:target-path "/tmp/war"})]
+                       {:target-path "/tmp/nodejs"
+                        :defaults {:runtime "nodejs8"}})]
      #_(defer {:fn ::upload :config config :service :service})
      #_(defer {:fn ::deps :config config :service :default :cont [::upload ::deploy ::migrate]})
 
      #_(defer {:fn ::deps :config config :service :service})
 
-     (defer {:fn ::upload :config config :service :service :cont [::deploy ::migrate]})
+     #_(defer {:fn ::upload :config config :service :service :cont [::deploy ::migrate]})
+
+     (defer {:fn ::upload :config config :service :default :cont [::deploy]})
+     #_(defer {:fn ::upload :config config :service :default})
+
+     #_(defer {:fn ::deploy :config config :service :default})
 
      #_(defer {:fn ::deploy :config config :service :service :cont [::migrate]})
      #_(defer {:fn ::deploy :config config :service :default :cont [::migrate]}))
