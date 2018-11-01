@@ -1,6 +1,5 @@
 {:paths ["src" "resources"]
- :deps {
-        org.clojure/clojure {:mvn/version "1.10.0-beta1"}
+ :deps {org.clojure/clojure {:mvn/version "1.9.0"}
         org.clojure/tools.deps.alpha {:mvn/version "0.5.442"}
         org.clojure/data.xml {:mvn/version "0.0.8"}
         org.clojure/java.classpath {:mvn/version "0.3.0"}
@@ -22,7 +21,11 @@
         com.taoensso/timbre  {:mvn/version "4.10.0"}
 
         com.google.appengine/appengine-api-1.0-sdk  {:mvn/version "1.9.65"}
+
         ;;com.google.appengine/appengine-api-labs  {:mvn/version "1.9.65"}
         ;;com.google.appengine/appengine-remote-api  {:mvn/version "1.9.65"}
         ;;com.google.appengine/appengine-tools-sdk  {:mvn/version "1.9.65"}
-        }}
+        }
+ :aliases {:vm
+           {:extra-deps {javax.servlet/javax.servlet-api {:mvn/version "3.1.0"}
+                         io.pedestal/pedestal.jetty {:mvn/version "0.5.4"}}}}}

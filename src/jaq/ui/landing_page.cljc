@@ -12,9 +12,6 @@
     [:div.container
      [:h1.title "JAQ - Your Cloud REPL"]
      [:p "Welcome to Cloud hacking."]
-     [:p
-      "Our hope is to help democratize Web development and usher in the next "
-      "generation of Web apps."]
      (clone-repl)]]])
 
 #_(

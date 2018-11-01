@@ -322,8 +322,19 @@
   (http/servlet-destroy @servlet)
   (reset! servlet nil))
 
+(defn -main [& args]
+  (-> service
+      (merge {::http/host "0.0.0.0"
+              ::http/port 80
+              ::http/join? false
+              ::http/type :jetty})
+      (http/create-server)
+      (http/start)))
+
 #_(
 
+   (declare s)
+   (def s :foo)
    *ns*
    (in-ns 'jaq.runtime)
 

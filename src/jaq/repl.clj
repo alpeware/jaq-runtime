@@ -281,6 +281,8 @@
 
    (get-file "src/jaq/browser.cljs")
 
+   (storage/default-bucket)
+
    (storage/get-file (storage/default-bucket) "src/jaq/browser.cljs")
 
    )
