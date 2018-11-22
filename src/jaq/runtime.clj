@@ -1,5 +1,6 @@
 (ns jaq.runtime
   (:require
+   [jaq.api :as api]
    [jaq.repl :refer [repl-handler index-handler]]
    [jaq.deploy :as deploy]
    [jaq.services.deferred :as deferred :refer [defer defer-fn]]
@@ -191,12 +192,12 @@
 
 ;;;;
 
-(defmulti api-fn :fn)
-(defmethod api-fn :default [params]
+#_(defmulti api-fn :fn)
+#_(defmethod api-fn :default [params]
   {:error "Unknown fn call"
    :params params})
 
-(defmethod api-fn :syncer [{:keys [id messages]}]
+(defmethod api/api-fn :syncer [{:keys [id messages]}]
   (let [_ (->> messages
                (map deferred/defer)
                (doall))
@@ -210,14 +211,15 @@
 #_(
    *ns*
    (in-ns 'jaq.runtime)
-   (api-fn {:fn :syncer :id :foo :messages nil})
+   (api/api-fn {:fn :syncer :id :foo :messages nil})
+   (api/api-fn {:fn :ui/process :device-id :foo :step :start})
    (deferred/process (deferred/lease {:tag "739ce4ea-9cf0-4b38-b6f8-eba54c440187"}))
    )
 
 (defn api-handler [{:keys [body edn-params] :as request}]
   (let [;;p (clojure.edn/read-string body)
         _ (debug edn-params)
-        res (api-fn edn-params)]
+        res (api/api-fn edn-params)]
     {:status 200 :body (pr-str res)}))
 
 ;;;

@@ -64,6 +64,13 @@
                 (copy-file e dest-file))))
        (doall)))
 
+#_(
+   (copy-dir "/tmp/.cache/src" "/tmp/war/WEB-INF/classes")
+   (->> (io/file "/tmp/.cache/src")
+        (file-seq))
+
+   )
+
 (defn write-manifest [opts war-path]
   (let [manifest-path [war-path "META-INF" "MANIFEST.MF"]]
     (apply io/make-parents manifest-path)
@@ -206,7 +213,7 @@
     (->> (io/file default-cache)
          (file-seq)
          (reverse)
-         (map (fn [e] (io/delete-file e)))
+         (map (fn [e] (io/delete-file e true)))
          (dorun))))
 
 (defn clear-war [opts]
@@ -620,12 +627,15 @@
      (deploy-all config)
      #_(defer {:fn ::deploy-all :config config}))
 
+   *ns*
    (in-ns 'jaq.deploy)
    (let [config (parse-config (jaq.repl/get-file "jaq-config.edn"))
          config (merge config
-                       {:server-ns "jaq.runtime"
-                        :target-path "/tmp/war"})]
-     (defer {:fn ::deploy-all :config config :services [:default]}))
+                       {:target-path "/tmp/war"})]
+     (defer {:fn ::deps :config config :service :default})
+     #_(defer {:fn ::upload :config config :service :default})
+     #_(defer {:fn ::deploy-all :config config :services [:default]}))
+   @*1
 
    (slurp "https://v28-dot-alpeware-jaq-runtime.appspot.com/public/baz.txt")
    (slurp "https://v28-dot-alpeware-jaq-runtime.appspot.com/")
@@ -738,6 +748,10 @@
    (with-redefs [clojure.tools.deps.alpha.repl/add-loader-url jaq.deploy/add-system-classpath]
      (clojure.tools.deps.alpha.repl/add-lib 'org.clojure/clojurescript {:mvn/version "1.10.339"}))
 
+   (with-redefs [clojure.tools.deps.alpha.repl/add-loader-url jaq.deploy/add-system-classpath]
+     (clojure.tools.deps.alpha.repl/add-lib 'enlive {:mvn/version "1.1.6"}))
+
+   ;; enlive {:mvn/version "1.1.6"}
    (add-system-classpath "http://central.maven.org/maven2/com/cemerick/pomegranate/1.0.0/pomegranate-1.0.0.jar")
 
 
