@@ -96,7 +96,7 @@
                       (merge {:fn :ui/update})
                       (assoc-in [:payload :projects] projects)
                       (deferred/add device-id)))
-       :enable (let [{:keys project projects} payload
+       :enable (let [{:keys [project projects]} payload
                      project-id (some->
                                  (filter (fn [e] (-> e
                                                      :projectId
