@@ -20,3 +20,18 @@ if [ ! -f /swapfile ]; then
     mkswap /swapfile
     swapon /swapfile
 fi
+
+# generate SSL cert
+if [ ! -f /root/jaq-repl.jks ]; then
+    keytool -keystore /root/jaq-repl.jks \
+        -alias jetty \
+        -keyalg RSA \
+        -keysize 2048 \
+        -sigalg SHA256withRSA \
+        -genkey \
+        -validity 3650 \
+        -noprompt \
+        -storepass jaqrepl \
+        -keypass jaqrepl \
+        -dname "CN=Unknown, OU=Unknown, O=Unknown, L=Unknown, ST=Unknown, C=Unknown"
+fi

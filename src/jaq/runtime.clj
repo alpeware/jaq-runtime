@@ -329,7 +329,11 @@
       (merge {::http/host "0.0.0.0"
               ::http/port 80
               ::http/join? false
-              ::http/type :jetty})
+              ::http/type :jetty
+              ::http/container-options {:keystore (:JAQ_KEYSTORE util/env)
+                                        :key-password (:JAQ_KEYSTORE_PASSWORD util/env)
+                                        :ssl? true
+                                        :ssl-port 443}})
       (http/create-server)
       (http/start)))
 

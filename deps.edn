@@ -10,7 +10,7 @@
         io.pedestal/pedestal.service-tools {:mvn/version "0.5.4"}
 
         com.alpeware/jaq-services {:git/url "https://github.com/alpeware/jaq-services"
-                                   :sha "4cc38738e6f5534861129885d33c926465443df5"}
+                                   :sha "72530df2bbe35ccd582d8e8bf05f6c60ecc265fa"}
 
         digest {:mvn/version "1.4.8"}
         hiccup {:mvn/version "1.0.5"}

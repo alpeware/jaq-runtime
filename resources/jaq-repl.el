@@ -125,4 +125,14 @@
 
 (global-set-key (kbd "C-x C-l") 'jaq-get-buffer)
 
+(defun jaq-switch-repl-type ()
+  (interactive)
+  (setq *jaq-repl-type*
+        (if (string= *jaq-repl-type* ":clj")
+            ":cljs"
+          ":clj"))
+  (message "Switched REPL type to: %s" *jaq-repl-type*))
+
+(global-set-key (kbd "C-x C-y") 'jaq-switch-repl-type)
+
 (provide 'jaq-eval-repl)
