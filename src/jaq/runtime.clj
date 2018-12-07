@@ -186,7 +186,6 @@
 
    )
 
-
 (defmulti listener-fn :fn)
 (defmethod listener-fn :default [_])
 
@@ -212,7 +211,7 @@
    *ns*
    (in-ns 'jaq.runtime)
    (api/api-fn {:fn :syncer :id :foo :messages nil})
-   (api/api-fn {:fn :ui/process :device-id :foo :step :start})
+   (api/api-fn {:fn :ui/process :device-id :foo :step :start :payload {:foo :bar}})
    (deferred/process (deferred/lease {:tag "739ce4ea-9cf0-4b38-b6f8-eba54c440187"}))
    )
 

@@ -54,9 +54,9 @@
               "[\n]+\\'" ""
               (buffer-substring-no-properties start end))))
     (with-current-buffer (get-buffer-create *jaq-session*)
-                      (insert (concat str "\n")))
+      (insert (concat str "\n")))
     (jaq-eval-repl *jaq-endpoint* *jaq-device-id* *jaq-repl-type*
-               *jaq-broadcast* str))
+                   *jaq-broadcast* str))
   (when and-go (pop-to-buffer (get-buffer-create *jaq-buffer*))))
 
 (defun jaq-eval-sexp (&optional and-go)
