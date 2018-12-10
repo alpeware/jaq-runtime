@@ -437,6 +437,8 @@
      (deploy-new-version {:config config :service :default})
      )
 
+   (->> (io/resource "app.cljs"))
+
    (->> (io/file "/tmp/.cache/src/")
         (file-seq)
         #_(count))
@@ -503,8 +505,8 @@
      (let [compiler-opts (merge {:optimizations :advanced
                                  :output-dir "/tmp/out"
                                  :output-to "/tmp/out/app.js"}
-                                opts)])
-     (build/build src compiler-opts))
+                                opts)]
+       (build/build src compiler-opts)))
 
    ;; requires src files on classpath
    (storage/get-files (storage/default-bucket) "src" "/tmp")
@@ -514,6 +516,8 @@
    (defer {:fn ::build :src "/tmp/src" :opts {:optimizations :none
                                               :asset-path "out"
                                               :main 'jaq.app}})
+
+   (defer {:fn ::build :src "/tmp/src"})
 
    @*1
 
@@ -698,14 +702,6 @@
         :classpath
         )
 
-   (keys rd)
-
-
-   (->> "{:foo foo.bar}"
-        #_(parse-config)
-        #_(pr-str)
-        (read-string))
-
    (->> (io/file "/tmp/war/WEB-INF/lib")
         (file-seq)
         (filter #(.isFile %))
@@ -847,8 +843,6 @@
    (slurp "/tmp/pomegranate.jar")
 
    (require 'cemerick.pomegranate)
-
-
 
    (java.lang.ClassLoader/getSystemClassLoader)
 
