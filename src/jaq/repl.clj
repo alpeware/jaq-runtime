@@ -228,10 +228,10 @@
 
 (defn repl-handler [{:keys [body params] :as request}]
   (let [{:keys [form device-id repl-type broadcast repl-token]} (keywordize-keys params)
-        _ (debug request)
-        _ (debug "form" form)
-        _ (debug "device id" device-id)
-        _ (debug repl-type)
+        ;; _ (debug request)
+        ;; _ (debug "form" form)
+        ;; _ (debug "device id" device-id)
+        ;; _ (debug repl-type)
         repl-type (read-string repl-type)
         broadcast (read-string broadcast)
         [session eval-fn] (if (= :clj repl-type)
@@ -251,8 +251,8 @@
     (if (= :clj repl-type)
       (swap! repl-sessions assoc device-id session)
       (swap! repl-cljs-sessions assoc device-id session))
-
-    (debug "edn" params evaled)
+    (debug ::repl-handler)
+    #_(debug "edn" params evaled)
     {:status 200 :body result}))
 
 (defn as-html [html]
@@ -300,7 +300,7 @@
         result (try
                  (eval-fn session form)
                  (catch Throwable t t))]
-    (debug "eval" device-id form result)
+    #_(debug "eval" device-id form result)
     ;; want to return as a string otherwise cljs edn reader might get confused ex. bidi routes
     (deferred/add {:fn :evaled :result (pr-str result) :device-id device-id} device-id)
     #_(debug "repl-type" repl-type)
