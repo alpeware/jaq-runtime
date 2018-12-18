@@ -10,7 +10,7 @@
         io.pedestal/pedestal.service-tools {:mvn/version "0.5.4"}
 
         com.alpeware/jaq-services {:git/url "https://github.com/alpeware/jaq-services"
-                                   :sha "f93732c9f5277499f4f6fd0601be3f3b816a3695"}
+                                   :sha "05ba8cdeedcbcab8681c06b7ae38f276da0fbf99"}
 
         digest {:mvn/version "1.4.8"}
         hiccup {:mvn/version "1.0.5"}
@@ -29,4 +29,7 @@
         }
  :aliases {:vm
            {:extra-deps {javax.servlet/javax.servlet-api {:mvn/version "3.1.0"}
-                         io.pedestal/pedestal.jetty {:mvn/version "0.5.4"}}}}}
+                         io.pedestal/pedestal.jetty {:mvn/version "0.5.4"}}}
+           :local
+           {:extra-deps {com.alpeware/jaq-services {:local/root "/tmp/libs/jaq-services"
+                                                    :deps/manifest :deps}}}}}

@@ -1,16 +1,15 @@
 (ns jaq.ui.landing-page
   (:require #?(:cljs [jaq.browser :as browser])
             #?(:clj [jaq.api :as api])
+            #?(:clj [jaq.gae.deferred :as deferred])
             #?(:clj [jaq.services.auth :as auth])
-            #?(:clj [jaq.services.deferred :as deferred])
-            #?(:clj [jaq.services.billing :as billing])
-            #?(:clj [jaq.services.compute :as compute])
-            #?(:clj [jaq.services.resource :as resource])
-            #?(:clj [jaq.services.compute :as compute])
-            #?(:clj [jaq.services.management :as management])
-            #?(:clj [jaq.services.storage :as storage])
-            #?(:clj [jaq.services.iam :as iam])
+            #?(:clj [jaq.gcp.compute :as compute])
+            #?(:clj [jaq.gcp.resource :as resource])
+            #?(:clj [jaq.gcp.management :as management])
+            #?(:clj [jaq.gcp.storage :as storage])
+            #?(:clj [jaq.gcp.iam :as iam])
             #?(:clj [jaq.services.util :as util])
+            #?(:clj [clojure.java.io :as io])
             #?(:cljs [reagent.core :as r])))
 
 (def steps {:start :auth
@@ -54,14 +53,6 @@
    (defmethod deferred/defer-fn :ui/process [{:keys [step payload device-id] :as params}]
      (prn step payload)
      (case step
-       :start-obsolete (let [_ (prn :start step)]
-                         (-> params
-                             (merge {:fn :ui/update})
-                             (assoc-in [:step] :auth)
-                             (assoc-in [:payload :message] "Hit the button to get started.")
-                             (assoc-in [:payload :next-step] :token)
-                             (deferred/add device-id))
-                         (prn :done))
        :auth (let [credentials (auth/default-credentials)
                    url (auth/generate-auth-url credentials @auth/cloud-scopes)]
                (-> params
@@ -70,10 +61,6 @@
                    (assoc-in [:payload :credentials] credentials)
                    (assoc-in [:payload :url] url)
                    (deferred/add device-id)))
-       :auth-obsolete (-> params
-                          (merge {:fn :ui/update})
-                          (assoc-in [:step] :token)
-                          (deferred/add device-id))
        :token (let [credentials (-> params :payload :credentials)
                     code (-> params :payload :code)
                     authed-credentials (try
@@ -88,15 +75,15 @@
                     (assoc-in [:payload :credentials] authed-credentials)
                     (assoc-in [:step] :project)
                     (deferred/defer)))
-       :project (let [projects (->
-                                (binding [util/*token-fn* (fn []
-                                                            (-> params
-                                                                :payload
-                                                                :credentials
-                                                                (auth/get-valid-credentials)
-                                                                :access-token))]
-                                  (resource/projects))
-                                :projects)]
+       :project (let [projects
+                      (binding [util/*token-fn* (fn []
+                                                  (-> params
+                                                      :payload
+                                                      :credentials
+                                                      (auth/get-valid-credentials)
+                                                      :access-token))]
+                        (-> (resource/projects)
+                            :projects))]
                   (-> params
                       (merge {:fn :ui/update})
                       (assoc-in [:payload :projects] projects)
@@ -117,8 +104,8 @@
                    (let [project-id (or project-id
                                         (do
                                           (loop [op (resource/create project project)]
-                                            (prn op)
-                                            (when-not (:done op)
+                                            (prn ::project op)
+                                            (when-not (or (:error op) (:done op))
                                               (-> params
                                                   (merge {:fn :ui/update})
                                                   (assoc-in [:payload :message] "Creating project...")
@@ -126,11 +113,10 @@
                                                   (deferred/add device-id))
                                               (util/sleep)
                                               (recur (management/operation (:name op)))))
-                                          project))
-                         _ (def p params)]
+                                          project))]
                      (loop [op (management/enable iam/service-name project-id)]
-                       (prn op)
-                       (when-not (:done op)
+                       (prn ::iam op)
+                       (when-not (or (:error op) (:done op))
                          (-> params
                              (merge {:fn :ui/update})
                              (assoc-in [:payload :message] "Enabling Cloud IAM...")
@@ -139,8 +125,8 @@
                          (util/sleep)
                          (recur (management/operation (:name op)))))
                      (loop [op (management/enable storage/service-name project-id)]
-                       (prn op)
-                       (when-not (:done op)
+                       (prn ::storage op)
+                       (when-not (or (:error op) (:done op))
                          (-> params
                              (merge {:fn :ui/update})
                              (assoc-in [:payload :message] "Enabling Storage API...")
@@ -149,8 +135,8 @@
                          (util/sleep)
                          (recur (management/operation (:name op)))))
                      (loop [op (management/enable resource/service-name project-id)]
-                       (prn op)
-                       (when-not (:done op)
+                       (prn ::resource op)
+                       (when-not (or (:error op) (:done op))
                          (-> params
                              (merge {:fn :ui/update})
                              (assoc-in [:payload :message] "Enabling Resource Manager API...")
@@ -170,21 +156,21 @@
                          (recur (management/operation (:name op))))))
                    (-> params
                        (assoc-in [:payload :message] nil)
-                       (assoc-in [:payload :projects] (resource/projects))
+                       (assoc-in [:payload :projects] (->> (resource/projects) :projects))
                        (assoc-in [:step] :vm)
                        (deferred/defer))))
        :vm (let [{:keys [project projects]} payload
-                 project-id project]
+                 project-id project
+                 _ (def p params)]
              (binding [util/*token-fn* (fn []
                                          (-> params
                                              :payload
                                              :credentials
                                              (auth/get-valid-credentials)
                                              :access-token))]
-               (let [zones (compute/zones project-id)
-                     service-accounts (iam/service-accounts project-id)
+               (let [zones (->> (compute/zones project-id) (doall))
+                     service-accounts (->> (iam/service-accounts project-id) (doall))
                      scopes @auth/cloud-scopes]
-                 (prn zones service-accounts scopes)
                  (-> params
                      (merge {:fn :ui/update})
                      (assoc-in [:payload :zones] zones)
@@ -199,20 +185,25 @@
                                                (auth/get-valid-credentials)
                                                :access-token))]
                  (let [project-id project
-                       metadata {:startup-script (slurp (clojure.java.io/resource "jaq-startup-vm.sh"))
+                       metadata {:startup-script (-> (io/resource "jaq-startup-vm.sh") (slurp))
+                                 :deps (-> (io/resource "jaq-deps-vm.edn") (slurp))
+                                 :JAQ_RUNTIME_COMMIT "abc"
                                  :JAQ_REPL_TOKEN secret
-                                 :DEFAULT_BUCKET (str project-id ".appspot.com")}
+                                 :DEFAULT_BUCKET (str project-id ".appspot.com")
+                                 :JAQ_KEYSTORE "/root/jaq-repl.jks"
+                                 :JAQ_KEYSTORE_PASSWORD "jaqrepl"}
                        repl {:project-id project-id :instance-name instance-name :zone zone
                              :service-account-email service-account
                              :scopes scope :metadata metadata}]
+                   (prn repl)
                    (loop [op (compute/create-instance repl)]
-                     (prn op)
+                     (prn ::repl op)
                      (let [message (->> ["Creating your REPL: "
                                          (:progress op)
                                          " / "
                                          (:status op)]
                                         (clojure.string/join))]
-                       (when-not (or (:error op) (-> op :status (= "DONE")))
+                       (when-not (or (:error op) (= (:status op) "DONE"))
                          (-> params
                              (merge {:fn :ui/update})
                              (assoc-in [:payload :message] message)
@@ -229,37 +220,52 @@
                                        :natIP)]
                    (-> params
                        (merge {:fn :ui/update})
-                       (assoc-in [:payload :message] nil)
+                       (assoc-in [:payload :message] "All done!")
                        (assoc-in [:payload :instance-ip] instance-ip)
                        (deferred/add device-id))))))))
 
 #_(
-   p
-   *ns*
-   (slurp (clojure.java.io/resource "jaq-startup-vm.sh"))
-   (binding [util/*token-fn* (fn []
-                               (-> p
-                                   :payload
-                                   :credentials
-                                   (auth/get-valid-credentials)
-                                   :access-token))]
-     (let [project-id (-> p :payload :project)]
-       #_(billing/billing-info project-id)
-       #_(billing/accounts)
-       #_(-> (billing/billing-info project-id)
-           :billingAccountName
-           (clojure.string/split #"/")
-           (last)
-           (billing/projects))
-       #_(management/enable compute/service-name project-id)
-       #_(management/enable billing/service-name project-id)
-       #_(management/enable resource/service-name project-id)
-       #_(management/operation (:name *1))
-       #_(resource/projects)))
 
+   (->> "https://github.com/alpeware/jaq-runtime/commits/master.atom"
+        (slurp)
+        (re-seq #"github.com/alpeware/jaq-runtime/commit/([a-z0-9]+)")
+        (first)
+        (last))
+   (-> (io/resource "jaq-startup-vm.sh")
+       (slurp))
+   p
+   (binding [util/*token-fn* (fn [] (-> p
+                                        :payload
+                                        :credentials
+                                        (auth/get-valid-credentials)
+                                        :access-token))]
+     #_(util/*token-fn*)
+     #_(resource/projects)
+     (->> (compute/zones "jaq-core")
+          (doall))
+     #_(->> (iam/service-accounts "jaq-core")
+          (doall))
+     #_(compute/instances "jaq-core" "us-central1-c")
+     #_(compute/zones "alpeware-jaq-runtime"))
+
+   (compute/create-instance {:project-id "alpeware-wealth" :instance-name "alpeware-wealth-vm" :zone :us-central1-c
+                             :service-account-email "328831522370-compute@developer.gserviceaccount.com"
+                             :scopes ["https://www.googleapis.com/auth/cloud-platform" "https://www.googleapis.com/auth/spreadsheets"]})
 
    (in-ns 'jaq.ui.landing-page)
+   (loop [op (management/enable iam/service-name "alpeware-jaq-runtime")]
+     (prn op)
+     (when-not (:done op)
+       (-> {:fn :ui/update}
+           (assoc-in [:payload :message] "Enabling Cloud IAM...")
+           (assoc-in [:payload :op] (-> op :name))
+           (deferred/add "739ce4ea-9cf0-4b38-b6f8-eba54c440187"))
+       (util/sleep)
+       (recur (management/operation (:name op)))))
 
+   (-> {:fn :ui/update}
+       (assoc-in [:payload :message] "Foo")
+       (deferred/add "739ce4ea-9cf0-4b38-b6f8-eba54c440187"))
    )
 #_(
    *ns*
@@ -269,6 +275,10 @@
    (swap! state assoc :step :start)
    (swap! state assoc :step :project)
    (swap! state assoc :step :token)
+   (->> @state
+        :projects
+        :projects
+        (swap! state assoc :projects))
    (process)
    )
 
@@ -285,7 +295,7 @@
      (->> #_(get steps step)
           step
           (assoc payload :step)
-          (reset! state))))
+          (swap! state merge))))
 
 #?(:cljs
    (defn process []
@@ -437,7 +447,12 @@
    (swap! state assoc :step :start)
    (swap! state assoc :step :project)
    (swap! state assoc :step :vm)
+   (swap! state assoc :projects ["Foo" "Bar" "Baz"])
 
+   (swap! state assoc :service-accounts [{:name "projects/alpeware-jaq-runtime/serviceAccounts/alpeware-jaq-runtime@appspot.gserviceaccount.com", :projectId "alpeware-jaq-runtime", :uniqueId "103149893445272188663", :email "alpeware-jaq-runtime@appspot.gserviceaccount.com", :displayName "App Engine default service account", :etag "BwVyuQd9YqE=", :oauth2ClientId "103149893445272188663"} {:name "projects/alpeware-jaq-runtime/serviceAccounts/937599099147-compute@developer.gserviceaccount.com", :projectId "alpeware-jaq-runtime", :uniqueId "113375519035552160146", :email "937599099147-compute@developer.gserviceaccount.com", :displayName "Compute Engine default service account", :etag "BwV3K/36x6U=", :oauth2ClientId "113375519035552160146"}])
+
+   (clojure.set/difference #{"foo"} ["foo" "bar"])
+   (swap! state assoc :scopes ["https://www.googleapis.com/auth/cloud-platform" "https://www.googleapis.com/auth/spreadsheets"])
    (->> @state :scope)
    (swap! state assoc :scope nil)
    (process)

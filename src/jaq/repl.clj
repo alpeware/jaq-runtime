@@ -7,11 +7,9 @@
    [hiccup.page :refer [html5 include-css include-js]]
    [ring.util.response :as response]
    [jaq.ui.landing-page]
-   [jaq.services.datastore :as datastore]
    [jaq.services.deferred :as deferred]
-   [jaq.services.memcache :as memcache]
-   [jaq.services.storage :as storage]
-   [jaq.services.util :as util]
+   [jaq.gcp.storage :as storage]
+   [jaq.services.env :as env]
    [taoensso.timbre :as timbre
     :refer [log  trace  debug  info  warn  error  fatal  report]])
   (:import
@@ -25,7 +23,7 @@
 (def session-entity :core/sessions)
 (def session-id 1)
 (def session-key (str session-entity "/" session-id))
-(defonce session-store (datastore/create-store session-entity))
+#_(defonce session-store (datastore/create-store session-entity))
 (def callbacks (atom {:noop (fn [_])}))
 
 ;;;
@@ -240,7 +238,7 @@
                             [(or (get @repl-cljs-sessions device-id) (new-cljs-session device-id))
                              eval-cljs])
         _ (swap! session assoc-in [:broadcast] broadcast)
-        evaled (if (= repl-token (:JAQ_REPL_TOKEN util/env))
+        evaled (if (= repl-token (:JAQ_REPL_TOKEN env/env))
                    (try
                      (eval-fn session form)
                     (catch Throwable t t))

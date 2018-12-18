@@ -3,6 +3,21 @@
 # JAQ VM Startup Script
 #
 
+# add custom attributes as env vars
+METADATA_URL="metadata.google.internal/computeMetadata/v1/instance/attributes"
+METADATA_HEADER="Metadata-Flavor: Google"
+declare -A SKIP=( ["startup-script"]=1 ["deps"]=1 )
+
+KEYS=($(curl -s http://${METADATA_URL}/ -H 'Metadata-Flavor: Google'))
+for v in "${KEYS[@]}"
+do
+    if [ -z "${SKIP[$v]}" ]; then
+        VAL="export ${v}="
+        VAL+="$(curl -s http://${METADATA_URL}/${v} -H 'Metadata-Flavor: Google')"
+        eval "${VAL}"
+    fi
+done
+
 # install packages
 apt-get update && apt-get install -y tmux htop openjdk-8-jdk-headless git rlwrap
 
@@ -14,12 +29,12 @@ fi
 
 # add swap
 if [ ! -f /swapfile ]; then
-    echo "Enabling swap"
+    echo "Creating swap"
     fallocate -l 4G /swapfile
     chmod 600 /swapfile
     mkswap /swapfile
-    swapon /swapfile
 fi
+swapon /swapfile
 
 # generate SSL cert
 if [ ! -f /root/jaq-repl.jks ]; then
@@ -37,22 +52,11 @@ if [ ! -f /root/jaq-repl.jks ]; then
         -dname "CN=Unknown, OU=Unknown, O=Unknown, L=Unknown, ST=Unknown, C=Unknown"
 fi
 
-# add custom attributes as env vars
-METADATA_URL="metadata.google.internal/computeMetadata/v1/instance/attributes"
-METADATA_HEADER="Metadata-Flavor: Google"
-SKIP=( ["startup-script"]=1 ["deps.edn"]=1 )
-
-KEYS=($(curl -s http://${METADATA_URL}/ -H 'Metadata-Flavor: Google'))
-for v in "${KEYS[@]}"
-do
-    if [ -z "${SKIP[$v]}" ]; then
-        VAL="${v}="
-        VAL+="$(curl -s http://${METADATA_URL}/${v} -H 'Metadata-Flavor: Google')"
-        eval "${VAL}"
-    fi
-done
-
+# add deps.edn from metadata
 if [ ! -f deps.edn ]; then
-    echo ""
-
+    echo "Creating startup deps"
+    curl -s -o deps.edn "http://${METADATA_URL}/deps" -H 'Metadata-Flavor: Google'
 fi
+
+# startup
+clojure -A:vm -Sdeps "{:deps {com.alpeware/jaq-runtime {:git/url \"https://github.com/alpeware/jaq-runtime\" :sha \"${JAQ_RUNTIME_SHA}\"}}}"
