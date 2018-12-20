@@ -26,6 +26,12 @@
 #_(defonce session-store (datastore/create-store session-entity))
 (def callbacks (atom {:noop (fn [_])}))
 
+#_(
+   (in-ns 'jaq.repl)
+   (->> @repl-sessions
+        keys)
+   )
+
 ;;;
 (def all-sessions (atom {:id session-id :v 1 :devices []}))
 

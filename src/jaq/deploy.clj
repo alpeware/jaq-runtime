@@ -315,6 +315,12 @@
   (exploded-war config service)
   #_(prepare-src config service)
   #_(clear-cache config)
+  ;; TODO: fix bug w/ empty files
+  (->> (io/file (:target-path config))
+       (file-seq)
+       (filter (fn [e] (-> e .length (= 0))))
+       (map (fn [e] (io/delete-file e)))
+       count)
   (when-not (empty? cont)
     (defer (merge params
                   {:fn (first cont)
@@ -675,9 +681,16 @@
    (require 'clojure.tools.deps.alpha.extensions.git)
 
    (let [config (parse-config (jaq.repl/get-file "config.edn"))
+         service :services/exchange
+         sha (->> (:repo config)
+                  (vals)
+                  (first)
+                  :sha)
          config (merge config
                        {:server-ns "jaq.runtime"
                         :target-path "/tmp/war"
+                        :version sha
+                        :code-prefix (str (:code-prefix config) sha)
                         :service-account (->> (metadata/instance)
                                               :serviceAccounts
                                               (vals)
@@ -697,10 +710,15 @@
      #_(defer {:fn ::deploy :config config
                :service :apps/default
                :cont [::migrate]})
-     (defer {:fn ::upload :config config
+     #_(defer {:fn ::deps :config config
              :service :apps/default
-             :cont [::deploy ::migrate]}))
+             :cont [::upload ::deploy ::migrate]})
+     (defer {:fn ::deps :config config
+             :service service
+             :cont [::upload ::deploy ::migrate]})
+     #_config)
    @*1
+   *ns*
 
    (->> (io/file "/tmp/war")
         (file-seq)
