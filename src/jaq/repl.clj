@@ -217,7 +217,8 @@
   (let [bucket (storage/default-bucket)
         path file-name
         content-type "text/plain"]
-    (storage/put-simple bucket path content-type body)))
+    (storage/put-simple {:bucket bucket :file-name path :content-type content-type
+                         :content body})))
 
 (defn get-file [file-name]
   (let [bucket (storage/default-bucket)

@@ -2,30 +2,36 @@
   (:require
    [clojure.tools.deps.alpha.util.maven :as mvn]
    [clojure.tools.deps.alpha :as deps]
+   [clojure.tools.deps.alpha.extensions :as ext]
    [clojure.tools.deps.alpha.script.parse :refer [parse-config]]
+   [clojure.tools.gitlibs.impl :as gitlibs]
    [clojure.string :as string]
    [clojure.java.io :as io]
    [clojure.java.classpath :as cp]
    [clojure.data.xml :as xml]
    [clojure.data.json :as json]
    [cljs.build.api :as build]
-   [jaq.services.appengine-admin :as admin]
+   [jaq.gce.metadata :as metadata]
+   [jaq.gcp.appengine-admin :as admin]
+   [jaq.gcp.management :as management]
+   [jaq.gcp.resource :as resource]
+   [jaq.gcp.storage :as storage]
    [jaq.services.deferred :refer [defer defer-fn]]
-   [jaq.services.management :as management]
-   [jaq.services.resource :as resource]
-   [jaq.services.storage :as storage]
    [jaq.services.util :as util :refer [sleep]]
    [jaq.war :as war]
    [taoensso.timbre :as timbre
     :refer [log  trace  debug  info  warn  error  fatal  report]])
   (:import
-   [java.io File]))
+   [java.io File]
+   [org.eclipse.jgit.api Git GitCommand TransportCommand TransportConfigCallback]
+   [org.eclipse.jgit.transport UsernamePasswordCredentialsProvider]))
 
 #_(
    *ns*
    (in-ns 'jaq.deploy)
    (io/resource "jaq-repl.el")
 
+   (UsernamePasswordCredentialsProvider. "foo" "bar")
    )
 
 (defn make-appengine-web-xml [opts]
@@ -154,23 +160,42 @@
 
 (defn resolve-deps [opts service war-path]
   (let [default-cache (:default-cache opts "/tmp/.cache")
-        paths (->> (:src opts)
-                   (concat (get-in opts [:services service :extra-paths]))
-                   (distinct))
-        src-path (->> paths
-                      (map (fn [e]
-                             (string/join File/separator [default-cache e]))))
-        deps-map {:paths [war-path]
-                  :mvn/repos mvn/standard-repos
-                  :mvn/local-repo (:mvn/local-repo opts default-cache)
-                  :deps (:deps opts)}
-        args-map (get-in opts [:services service])]
+        service-account (:service-account opts)
+        call-with-auth (fn ([^GitCommand command]
+                            (call-with-auth
+                             (.. command getRepository getConfig (getString "remote" "origin" "url"))
+                             command))
+                         ([^String url ^GitCommand command]
+                          (if (and (instance? TransportCommand command)
+                                   (string/starts-with? url "https://source.developers"))
+                            (.. ^TransportCommand command
+                                (setCredentialsProvider (UsernamePasswordCredentialsProvider.
+                                                         service-account
+                                                         (util/get-token))) call)
+                            (.call command))))]
     (with-redefs [clojure.tools.gitlibs.impl/cache-dir (fn []
-                                                         (:git/local-repo opts default-cache))]
-      (let [lib-map (deps/resolve-deps deps-map args-map)
-            cp (deps/make-classpath lib-map src-path nil)]
-        {:lib-map lib-map
-         :classpath cp}))))
+                                                         (:git/local-repo opts default-cache))
+                  gitlibs/call-with-auth call-with-auth]
+      (let [paths (->> (:paths opts)
+                       (concat (get-in opts [:system service :extra-paths]))
+                       (distinct))
+            {:keys [base path]} (ext/lib-location (-> (:repo opts) (keys) first)
+                                                  (-> (:repo opts) (vals) first) {})
+            _ (ext/manifest-type (-> (:repo opts) (keys) first)
+                                 (-> (:repo opts) (vals) first) nil)
+            src-path (->> paths
+                          (map (fn [e]
+                                 (string/join File/separator [base path e]))))
+            _ (prn src-path)
+            deps-map {:paths [war-path]
+                      :mvn/repos mvn/standard-repos
+                      :mvn/local-repo (:mvn/local-repo opts default-cache)
+                      :deps (:deps opts)}
+            args-map (get-in opts [:system service])]
+        (let [lib-map (deps/resolve-deps deps-map args-map)
+              cp (deps/make-classpath lib-map src-path nil)]
+          {:lib-map lib-map
+           :classpath cp})))))
 
 #_(
    (resolve-deps {:src ["/tmp/src"]
@@ -288,7 +313,7 @@
   (clear-war config)
   #_(prepare-src config service)
   (exploded-war config service)
-  (prepare-src config service)
+  #_(prepare-src config service)
   #_(clear-cache config)
   (when-not (empty? cont)
     (defer (merge params
@@ -315,21 +340,33 @@
                   (take 1)
                   (first))
         uploaded-file (io/file (:uploaded-file config))]
+    #_(storage/copy-local src-dir bucket prefix)
+    #_(when-not (empty? cont)
+        (defer (merge params
+                      {:fn (first cont) :cont (rest cont)})))
     (debug "uploading" file)
-    (when uploaded-file
-      (debug "deleting" uploaded-file)
-      (io/delete-file uploaded-file true))
+    #_(when uploaded-file
+        (debug "deleting" uploaded-file)
+        (io/delete-file uploaded-file true))
     (if file
-      (storage/put-large bucket (.getPath file) src-dir prefix
-                         {:callback jaq.deploy/upload
+      (storage/put-large {:bucket bucket :path (.getPath file)
+                          :base-dir src-dir :prefix prefix
+                          :callback jaq.deploy/upload
                           :args (merge params {:uploaded-file (.getPath file)})})
       (when-not (empty? cont)
         (defer (merge params
                       {:fn (first cont) :cont (rest cont)}))))))
 
+#_(
+   (in-ns 'jaq.deploy)
+   )
+
 (defmethod defer-fn ::deploy [{:keys [service config cont] :as params}]
   (debug ::deploy params)
-  (let [op (admin/deploy-app (merge config {:service service}))]
+  (let [op (admin/deploy-app
+            (merge config {:service (keyword (name service))}
+                   {:env-vars (merge (:env-vars config)
+                                     (get-in config [:system service :extra-env-vars]))}))]
     (defer (merge params {:fn ::op :op op}))))
 
 (defmethod defer-fn ::migrate [{:keys [service config cont] :as params}]
@@ -429,6 +466,7 @@
 
 #_(
    *ns*
+   (require 'jaq.deploy)
    (in-ns 'jaq.deploy)
 
    (let [config (parse-config (jaq.repl/get-file "jaq-config.edn"))
@@ -469,6 +507,34 @@
     (->> (io/file "/tmp/src/")
          (file-seq)
          (count)))
+
+   (->> (UsernamePasswordCredentialsProvider.
+         "570282834096-compute@developer.gserviceaccount.com"
+         (util/get-token)))
+
+   (defn call-with-auth
+     ([^GitCommand command]
+      (call-with-auth
+       (.. command getRepository getConfig (getString "remote" "origin" "url"))
+       command))
+     ([^String url ^GitCommand command]
+      (if (and (instance? TransportCommand command)
+               (string/starts-with? url "https://source.developers"))
+        (do
+          (prn ::transport)
+          (.. ^TransportCommand command (setCredentialsProvider (UsernamePasswordCredentialsProvider.
+                                                                 "570282834096-compute@developer.gserviceaccount.com"
+                                                                 (util/get-token))) call))
+        (do
+          (prn ::no-transport)
+          (.call command)))))
+
+   (with-redefs [gitlibs/call-with-auth call-with-auth]
+     (clojure.tools.deps.alpha.extensions/manifest-type
+      'alpeware/kinakuta
+      {:git/url "https://source.developers.google.com/p/crypto-exchange-dev/r/kinakuta"
+       :sha "922ae18bd758551f5958d09256f2771baf846478"}
+      nil))
 
    )
 
@@ -600,6 +666,49 @@
 
    *ns*
    (in-ns 'jaq.deploy)
+   (-> (parse-config (jaq.repl/get-file "config.edn"))
+       :system
+       :apps/default
+       :client-ns
+       )
+
+   (require 'clojure.tools.deps.alpha.extensions.git)
+
+   (let [config (parse-config (jaq.repl/get-file "config.edn"))
+         config (merge config
+                       {:server-ns "jaq.runtime"
+                        :target-path "/tmp/war"
+                        :service-account (->> (metadata/instance)
+                                              :serviceAccounts
+                                              (vals)
+                                              (map :email)
+                                              (first))})
+         ]
+     #_(deploy-all config)
+     #_(defer {:fn ::deploy-all :config config})
+     #_(assoc config :deps (merge (:deps config) (:repo config)))
+     #_(ext/lib-location (-> (:repo config) (keys) first)
+                         (-> (:repo config) (vals) first) {})
+     #_(defer {:fn ::deps :config config
+               :service :apps/default
+               :cont [::upload ::deploy ::migrate]})
+     #_(defer {:fn ::upload :config config
+               :service :apps/default})
+     #_(defer {:fn ::deploy :config config
+               :service :apps/default
+               :cont [::migrate]})
+     (defer {:fn ::upload :config config
+             :service :apps/default
+             :cont [::deploy ::migrate]}))
+   @*1
+
+   (->> (io/file "/tmp/war")
+        (file-seq)
+        (filter (fn [e] (-> e .length (= 0))))
+        (map (fn [e] (io/delete-file e)))
+        count)
+   (keyword (name :apps/default))
+
    (let [config (parse-config (jaq.repl/get-file "jaq-config.edn"))
          config (merge config
                        {:target-path "/tmp/nodejs"

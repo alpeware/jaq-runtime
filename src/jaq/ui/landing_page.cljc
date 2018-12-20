@@ -114,6 +114,16 @@
                                               (util/sleep)
                                               (recur (management/operation (:name op)))))
                                           project))]
+                     (loop [op (management/enable management/service-name project-id)]
+                       (prn ::iam op)
+                       (when-not (or (:error op) (:done op))
+                         (-> params
+                             (merge {:fn :ui/update})
+                             (assoc-in [:payload :message] "Enabling Service Management...")
+                             (assoc-in [:payload :op] (-> op :name))
+                             (deferred/add device-id))
+                         (util/sleep)
+                         (recur (management/operation (:name op)))))
                      (loop [op (management/enable iam/service-name project-id)]
                        (prn ::iam op)
                        (when-not (or (:error op) (:done op))
