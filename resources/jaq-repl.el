@@ -45,8 +45,14 @@
                     (goto-char url-http-end-of-headers)
                     (forward-char)
                     (delete-region (point-min) (point))
-                    (append-to-buffer (get-buffer-create *jaq-buffer*) (point-min) (point-max))
-                    (kill-buffer (current-buffer))))))
+                    (let ((str (buffer-substring-no-properties (point-min) (point-max))))
+                      (kill-buffer (current-buffer))
+                      (with-current-buffer (get-buffer-create *jaq-buffer*)
+                        (insert str)
+                        (goto-char (point-max))
+                        (set-window-point
+                         (get-buffer-window (current-buffer) 'visible)
+                         (point-max))))))))
 
 (defun jaq-eval-region (start end &optional and-go)
   (interactive "r\nP")
